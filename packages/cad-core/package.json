@@ -1,0 +1,37 @@
+{
+  "name": "@rapidtool/cad-core",
+  "version": "0.0.1",
+  "description": "Core CAD operations and utilities - pure logic, no React dependencies",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "peerDependencies": {
+    "@types/three": "^0.182.0",
+    "three": ">=0.160.0",
+    "three-bvh-csg": "^0.0.17",
+    "three-stdlib": "^2.0.0",
+    "manifold-3d": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.6",
+    "typescript": "^5.6.3"
+  },
+  "keywords": [
+    "cad",
+    "3d",
+    "three.js",
+    "csg",
+    "transform",
+    "mesh",
+    "stl",
+    "offset",
+    "export"
+  ],
+  "license": "MIT"
+}
