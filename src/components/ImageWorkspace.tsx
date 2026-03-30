@@ -18,7 +18,7 @@ import { useAppStore } from '../stores';
 import type { Point2D } from '../stores';
 import { DraggableCorners } from './DraggableCorners';
 import { TracingOverlay } from './TracingOverlay';
-import { calculatePixelsPerMm } from '../lib/geometry';
+import { calculatePixelsPerMm, createToolOutline, contourToSVGPath } from '../lib/geometry';
 import { traceTool, traceRegion } from '../workers';
 
 // ============================================================================
@@ -256,17 +256,19 @@ const ToolOutlinesOverlay: React.FC<ToolOutlinesOverlayProps> = ({
         return (
           <g key={outline.id}>
             {/* Fill */}
-            <polygon
-              points={pointsStr}
+            <path
+              d={contourToSVGPath(outline.smoothedPoints)}
               fill={isSelected ? `${outline.color}30` : `${outline.color}15`}
               stroke="none"
+              className="transition-all duration-300"
             />
             {/* Border */}
-            <polygon
-              points={pointsStr}
+            <path
+              d={contourToSVGPath(outline.smoothedPoints)}
               fill="none"
               stroke={outline.color}
               strokeWidth={Math.max((isSelected ? 3 : 2) / zoom, 1)}
+              className="transition-all duration-300"
             />
           </g>
         );
@@ -291,7 +293,7 @@ const ZoomControls: React.FC<ZoomControlsProps> = ({
   onReset,
 }) => {
   return (
-    <div className="absolute bottom-4 right-4 flex items-center gap-1 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-lg p-1 shadow-sm">
+    <div className="absolute bottom-4 right-4 flex items-center gap-1 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-1.5" style={{ boxShadow: 'var(--shadow-md)' }}>
       <button
         onClick={onZoomOut}
         className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-[hsl(var(--muted))] transition-colors"
@@ -299,7 +301,7 @@ const ZoomControls: React.FC<ZoomControlsProps> = ({
       >
         <ZoomOut className="w-4 h-4" />
       </button>
-      <span className="w-14 text-center text-xs font-tech text-[hsl(var(--muted-foreground))]">
+      <span className="w-14 text-center text-[12px] font-tech font-medium text-[hsl(var(--muted-foreground))]">
         {Math.round(zoom * 100)}%
       </span>
       <button
@@ -344,8 +346,8 @@ const EmptyState: React.FC = () => (
         />
       </svg>
     </div>
-    <p className="text-sm font-medium mb-1">No image loaded</p>
-    <p className="text-xs opacity-60">Upload an image to get started</p>
+    <p className="text-[14px] font-medium mb-1">No image loaded</p>
+    <p className="text-[12px] opacity-60">Upload an image to get started</p>
   </div>
 );
 
@@ -448,12 +450,12 @@ const UploadDropzone: React.FC<UploadDropzoneProps> = ({ onFileSelect }) => {
         {/* Text */}
         <div className="text-center">
           <p className={`
-            text-sm font-medium mb-1 transition-colors duration-200
+            text-[15px] font-semibold mb-1 transition-colors duration-200
             ${isDragging ? 'text-[hsl(var(--primary))]' : 'text-[hsl(var(--foreground))]'}
           `}>
             {isDragging ? 'Drop image here' : 'Drop image here or click to browse'}
           </p>
-          <p className="text-xs text-[hsl(var(--muted-foreground))]">
+          <p className="text-[13px] text-[hsl(var(--muted-foreground))]">
             JPG, PNG, WebP • Max 50MB
           </p>
         </div>
@@ -465,17 +467,17 @@ const UploadDropzone: React.FC<UploadDropzoneProps> = ({ onFileSelect }) => {
             fileInputRef.current?.click();
           }}
           className="
-            px-4 py-2 rounded-lg text-xs font-medium
-            bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]
-            hover:bg-[hsl(var(--primary)/0.9)] transition-colors duration-200
+            px-5 py-2.5 rounded-xl text-[13px] font-semibold
+            text-white transition-all duration-200
           "
+          style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-btn)' }}
         >
           Browse Files
         </button>
       </div>
 
       {/* Subtle tips */}
-      <p className="mt-6 text-xs text-[hsl(var(--muted-foreground))] text-center max-w-sm">
+      <p className="mt-6 text-[13px] text-[hsl(var(--muted-foreground))] text-center max-w-sm">
         Tip: Place your tools on white A4 paper and take a photo from directly above for best results.
       </p>
     </div>
@@ -570,17 +572,7 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
       // Use worker-based tracing (falls back to main thread if needed)
       const result = await traceTool(imageUrl, point.x, point.y);
       if (result) {
-        // Create tool outline object
-        const outline = {
-          id: `tool-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          points: result.points,
-          smoothedPoints: result.points,
-          boundingBox: calculateBoundingBox(result.points),
-          area: result.area,
-          areaInMm2: pixelsPerMm ? result.area / (pixelsPerMm * pixelsPerMm) : undefined,
-          color: getNextToolColor(),
-          name: `Tool ${toolOutlines.length + 1}`,
-        };
+        const outline = createToolOutline(result.points, pixelsPerMm || undefined);
         addToolOutline(outline);
       }
     } catch (error) {
@@ -598,16 +590,7 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     try {
       const result = await traceRegion(imageUrl, rect);
       if (result) {
-        const outline = {
-          id: `tool-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          points: result.points,
-          smoothedPoints: result.points,
-          boundingBox: calculateBoundingBox(result.points),
-          area: result.area,
-          areaInMm2: pixelsPerMm ? result.area / (pixelsPerMm * pixelsPerMm) : undefined,
-          color: getNextToolColor(),
-          name: `Tool ${toolOutlines.length + 1}`,
-        };
+        const outline = createToolOutline(result.points, pixelsPerMm || undefined);
         addToolOutline(outline);
       }
     } catch (error) {

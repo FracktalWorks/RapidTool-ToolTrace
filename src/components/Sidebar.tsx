@@ -27,7 +27,7 @@ import {
   SidebarDivider,
   useDashboardLayout,
 } from '@rapidtool/cad-ui';
-import { useAppStore, type WorkflowStep } from '../stores';
+import { useAppStore, useAuthStore, type WorkflowStep } from '../stores';
 
 // ============================================================================
 // Constants
@@ -88,34 +88,35 @@ const PrerequisitesNotification: React.FC<PrerequisitesNotificationProps> = ({
 
   return (
     <div
-      className="fixed top-20 left-1/2 -translate-x-1/2 z-40 w-full max-w-md pointer-events-auto"
-      style={{ animation: 'fadeIn 0.2s ease-out' }}
+      className="fixed top-20 left-1/2 -translate-x-1/2 z-40 w-full max-w-md pointer-events-auto animate-fade-in"
     >
-      <div className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl shadow-xl overflow-hidden">
+      <div className="glass-card rounded-2xl overflow-hidden"
+        style={{ boxShadow: 'var(--shadow-xl)' }}
+      >
         {/* Header */}
         <div className="px-4 py-3 flex items-start gap-3">
-          <div className="w-8 h-8 rounded-lg bg-[hsl(var(--warning)/0.15)] flex items-center justify-center shrink-0">
+          <div className="w-8 h-8 rounded-xl bg-[hsl(var(--warning)/0.12)] flex items-center justify-center shrink-0">
             <AlertCircle className="w-4 h-4 text-[hsl(var(--warning))]" />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-xs font-semibold text-[hsl(var(--foreground))]">
+            <h3 className="text-[13px] font-semibold text-[hsl(var(--foreground))]">
               Complete previous steps
             </h3>
             <p className="mt-0.5 text-[11px] text-[hsl(var(--muted-foreground))] leading-relaxed">
-              <span className="font-medium text-[hsl(var(--foreground))]">{targetConfig.label}</span> requires the following:
+              <span className="font-semibold text-[hsl(var(--foreground))]">{targetConfig.label}</span> requires the following:
             </p>
           </div>
           <button
             onClick={onClose}
-            className="w-6 h-6 rounded-md flex items-center justify-center text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] transition-colors shrink-0"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] transition-all duration-200 shrink-0"
           >
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
 
         {/* Incomplete Steps List */}
-        <div className="px-4 pb-3">
-          <div className="flex flex-wrap gap-1.5">
+        <div className="px-4 pb-4">
+          <div className="flex flex-wrap gap-2">
             {incompleteSteps.map((stepConfig) => (
               <button
                 key={stepConfig.step}
@@ -124,16 +125,16 @@ const PrerequisitesNotification: React.FC<PrerequisitesNotificationProps> = ({
                   onClose();
                 }}
                 className="
-                  inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md
-                  bg-[hsl(var(--muted)/0.6)] hover:bg-[hsl(var(--primary)/0.1)]
-                  border border-[hsl(var(--border)/0.5)] hover:border-[hsl(var(--primary)/0.3)]
-                  transition-colors group
+                  inline-flex items-center gap-2 px-3 py-2 rounded-xl
+                  bg-[hsl(var(--muted)/0.5)] hover:bg-[hsl(var(--primary)/0.08)]
+                  border border-[hsl(var(--border)/0.5)] hover:border-[hsl(var(--primary)/0.25)]
+                  transition-all duration-200 group
                 "
               >
                 <span className="text-[hsl(var(--muted-foreground))] group-hover:text-[hsl(var(--primary))] transition-colors">
                   {stepConfig.icon}
                 </span>
-                <span className="text-[11px] font-medium text-[hsl(var(--foreground))] group-hover:text-[hsl(var(--primary))] transition-colors">
+                <span className="text-[12px] font-medium text-[hsl(var(--foreground))] group-hover:text-[hsl(var(--primary))] transition-colors">
                   {stepConfig.label}
                 </span>
                 <ArrowRight className="w-3 h-3 text-[hsl(var(--muted-foreground))] group-hover:text-[hsl(var(--primary))] transition-colors" />
@@ -146,17 +147,44 @@ const PrerequisitesNotification: React.FC<PrerequisitesNotificationProps> = ({
   );
 };
 
+
+
 // ============================================================================
 // User Profile Section
 // ============================================================================
 
 const UserProfile: React.FC<{ isExpanded: boolean }> = ({ isExpanded }) => {
   const [isPopupOpen, setIsPopupOpen] = useState(false);
+  const { user, isAuthenticated, logout } = useAuthStore();
 
-  const user = {
-    name: 'Santhosh',
-    email: 'santhosh@example.com',
-    avatar: null as string | null,
+  if (!isAuthenticated || !user) {
+    return (
+      <button
+        onClick={() => {
+          // This will trigger the global auth modal which is managed in Header
+          // We can also add it to App.tsx for global access if needed
+          window.dispatchEvent(new CustomEvent('open-auth-modal'));
+        }}
+        className={`
+          w-full flex items-center rounded-xl transition-all duration-200 hover:bg-[hsl(var(--muted))]
+          ${isExpanded ? 'gap-3 px-3 py-2.5' : 'justify-center px-1 py-2.5'}
+        `}
+      >
+        <div className="w-8 h-8 rounded-full bg-[hsl(var(--muted))] flex items-center justify-center shrink-0 border border-[hsl(var(--border))]">
+          <User className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
+        </div>
+        {isExpanded && (
+          <div className="flex-1 text-left overflow-hidden">
+            <p className="text-[13px] font-bold truncate">Sign In</p>
+          </div>
+        )}
+      </button>
+    );
+  }
+
+  const handleLogout = () => {
+    logout();
+    setIsPopupOpen(false);
   };
 
   return (
@@ -167,29 +195,34 @@ const UserProfile: React.FC<{ isExpanded: boolean }> = ({ isExpanded }) => {
           <div className="fixed inset-0 z-[9998]" onClick={() => setIsPopupOpen(false)} />
           <div
             className={`
-              fixed z-[9999]
-              ${isExpanded 
-                ? 'left-3 bottom-20 w-56' 
+              fixed z-[9999] animate-scale-in
+              ${isExpanded
+                ? 'left-3 bottom-20 w-56'
                 : 'left-14 bottom-16 w-48'
               }
               bg-[hsl(var(--popover))] border border-[hsl(var(--border))]
-              rounded-lg shadow-xl overflow-hidden
+              rounded-xl overflow-hidden
             `}
+            style={{ boxShadow: 'var(--shadow-xl)' }}
           >
-            <div className="p-1">
+            <div className="px-4 py-3 border-b border-[hsl(var(--border))] bg-[hsl(var(--muted)/0.3)]">
+              <p className="text-[12px] font-bold truncate">{user.name}</p>
+              <p className="text-[10px] text-[hsl(var(--muted-foreground))] truncate">{user.email}</p>
+            </div>
+            <div className="p-1.5 space-y-0.5">
               <button
                 onClick={() => setIsPopupOpen(false)}
-                className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-semibold text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] transition-colors"
               >
-                <Settings className="w-3.5 h-3.5" />
-                <span>Profile</span>
+                <Settings className="w-4 h-4" />
+                <span>Profile Settings</span>
               </button>
               <button
-                onClick={() => setIsPopupOpen(false)}
-                className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.1)] transition-colors"
+                onClick={handleLogout}
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-bold text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.08)] transition-colors"
               >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Logout</span>
+                <LogOut className="w-4 h-4" />
+                <span>Log Out</span>
               </button>
             </div>
           </div>
@@ -199,20 +232,23 @@ const UserProfile: React.FC<{ isExpanded: boolean }> = ({ isExpanded }) => {
       <button
         onClick={() => setIsPopupOpen(!isPopupOpen)}
         className={`
-          w-full flex items-center rounded-lg transition-colors hover:bg-[hsl(var(--muted))]
-          ${isExpanded ? 'gap-3 px-3 py-2.5' : 'justify-center px-2 py-2.5'}
+          w-full flex items-center rounded-xl transition-all duration-200 hover:bg-[hsl(var(--muted))]
+          ${isExpanded ? 'gap-3 px-3 py-2.5' : 'justify-center px-1 py-1.5'}
         `}
       >
-        <div className="w-7 h-7 rounded-full bg-[hsl(var(--primary))] flex items-center justify-center shrink-0">
+        <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 overflow-hidden border border-[hsl(var(--border))] bg-[hsl(var(--muted))] "
+          style={{ boxShadow: 'var(--shadow-sm)' }}
+        >
           {user.avatar ? (
-            <img src={user.avatar} alt={user.name} className="w-7 h-7 rounded-full object-cover" />
+            <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
           ) : (
-            <User className="w-3.5 h-3.5 text-[hsl(var(--primary-foreground))]" />
+            <User className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
           )}
         </div>
         {isExpanded && (
           <div className="flex-1 text-left overflow-hidden">
-            <p className="text-xs font-medium truncate">{user.name}</p>
+            <p className="text-[13px] font-bold truncate">{user.name}</p>
+            <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-0.5 truncate uppercase tracking-wider font-semibold">User Account</p>
           </div>
         )}
       </button>
@@ -280,7 +316,7 @@ export const Sidebar: React.FC = () => {
       case 'design': {
         // Check if elements are added to grid
         const hasElements = layoutState.shapes.length > 0;
-        
+
         // Check if any design settings have been changed from defaults
         const hasSettingsChanges = (
           designSettings.baseHeight !== DEFAULT_DESIGN_SETTINGS.baseHeight ||
@@ -289,7 +325,7 @@ export const Sidebar: React.FC = () => {
           designSettings.chamferSize !== DEFAULT_DESIGN_SETTINGS.chamferSize ||
           designSettings.gridfinityBase !== DEFAULT_DESIGN_SETTINGS.gridfinityBase
         );
-        
+
         return hasElements && hasSettingsChanges;
       }
       case 'export':
@@ -330,20 +366,26 @@ export const Sidebar: React.FC = () => {
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* Sidebar Title - positioned to work with DashboardLayout header */}
-      <div className="px-3 py-2 border-b border-[hsl(var(--border))] flex items-center justify-between">
-        {isExpanded && <h3 className="text-xs font-semibold text-[hsl(var(--foreground))]">Steps</h3>}
+      <div className="px-3 py-2.5 border-b border-[hsl(var(--border))] flex items-center justify-between">
+        {isExpanded && (
+          <h3 className="text-[12px] font-semibold text-[hsl(var(--muted-foreground))] uppercase"
+            style={{ letterSpacing: '0.08em' }}
+          >
+            Workflow
+          </h3>
+        )}
         <button
           onClick={toggleSidebar}
-          className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-[hsl(var(--muted))] transition-colors text-[hsl(var(--muted-foreground))] shrink-0"
+          className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[hsl(var(--muted))] transition-all duration-200 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] shrink-0"
           title={isExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
         >
-          <PanelLeft className={`w-4 h-4 transition-transform ${isExpanded ? '' : 'rotate-180'}`} />
+          <PanelLeft className={`w-4 h-4 transition-transform duration-300 ${isExpanded ? '' : 'rotate-180'}`} />
         </button>
       </div>
-      
+
       {/* Workflow Steps */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden py-3 px-2">
-        <SidebarIconGroup gap={8}>
+        <SidebarIconGroup gap={6}>
           {stepConfigs.map((config) => {
             const isActive = config.step === currentStep;
             const completed = getStepCompletion(config.step);
@@ -361,12 +403,15 @@ export const Sidebar: React.FC = () => {
                 />
                 {/* Custom completion badge */}
                 {completed && !isActive && (
-                  <div 
-                    className={`absolute bg-green-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center w-4 h-4 ${
-                      isExpanded 
-                        ? 'top-2 right-2' 
+                  <div
+                    className={`absolute flex items-center justify-center w-[18px] h-[18px] rounded-full text-white text-[10px] font-bold ${isExpanded
+                        ? 'top-2 right-2'
                         : '-top-1 -right-1'
-                    }`}
+                      }`}
+                    style={{
+                      background: 'linear-gradient(135deg, hsl(160, 84%, 39%), hsl(160, 84%, 45%))',
+                      boxShadow: '0 1px 4px rgba(16, 185, 129, 0.35)',
+                    }}
                   >
                     ✓
                   </div>

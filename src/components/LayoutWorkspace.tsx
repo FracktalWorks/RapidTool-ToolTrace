@@ -11,6 +11,7 @@
 import React, { useRef, useState, useCallback, useMemo, useEffect } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, RotateCcw, Move } from 'lucide-react';
 import { useAppStore, type LayoutShape } from '../stores';
+import { offsetPolygon, contourToSVGPath, getBoundingBox } from '../lib/geometry';
 
 // ============================================================================
 // Constants
@@ -33,7 +34,7 @@ interface ViewState {
   panY: number;
 }
 
-type ResizeHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+// No resize handles anymore
 
 // ============================================================================
 // Utility Functions
@@ -47,32 +48,33 @@ function clamp(value: number, min: number, max: number): number {
 function generateToolShapePath(
   shape: LayoutShape,
   toolOutlines: ReturnType<typeof useAppStore.getState>['toolOutlines'],
-  pixelsPerMm: number
+  pixelsPerMm: number,
+  clearanceValue: number
 ): string {
   const outline = toolOutlines.find((o) => o.id === shape.toolOutlineId);
   if (!outline) return '';
   
-  const { smoothedPoints, boundingBox } = outline;
-  const bboxWidth = boundingBox.maxX - boundingBox.minX;
-  const bboxHeight = boundingBox.maxY - boundingBox.minY;
+  // Apply clearance to smoothed points if needed
+  const basePoints = outline.smoothedPoints;
+  const processedPoints = clearanceValue > 0 
+    ? offsetPolygon(basePoints, clearanceValue * pixelsPerMm)
+    : basePoints;
+    
+  const bbox = getBoundingBox(processedPoints);
+  const bboxWidth = bbox.maxX - bbox.minX;
+  const bboxHeight = bbox.maxY - bbox.minY;
   
   // Scale factor to fit the shape dimensions
-  const scaleX = shape.width / (bboxWidth / pixelsPerMm);
-  const scaleY = shape.height / (bboxHeight / pixelsPerMm);
+  const scaleX = shape.width / (bboxWidth / pixelsPerMm || 1);
+  const scaleY = shape.height / (bboxHeight / pixelsPerMm || 1);
   
   // Translate points to shape position
-  const pathPoints = smoothedPoints.map((p) => ({
-    x: shape.x + ((p.x - boundingBox.minX) / pixelsPerMm) * scaleX,
-    y: shape.y + ((p.y - boundingBox.minY) / pixelsPerMm) * scaleY,
+  const pathPoints = processedPoints.map((p) => ({
+    x: shape.x + ((p.x - bbox.minX) / pixelsPerMm) * scaleX,
+    y: shape.y + ((p.y - bbox.minY) / pixelsPerMm) * scaleY,
   }));
   
-  if (pathPoints.length < 2) return '';
-  
-  let d = `M ${pathPoints[0].x.toFixed(2)} ${pathPoints[0].y.toFixed(2)}`;
-  for (let i = 1; i < pathPoints.length; i++) {
-    d += ` L ${pathPoints[i].x.toFixed(2)} ${pathPoints[i].y.toFixed(2)}`;
-  }
-  return d + ' Z';
+  return contourToSVGPath(pathPoints, true);
 }
 
 // Generate path for primitive shapes
@@ -238,6 +240,7 @@ interface ShapeOverlayProps {
   onSelect: () => void;
   onDragStart: (e: React.MouseEvent) => void;
   isToolLocked?: boolean;
+  clearanceValue: number;
 }
 
 const ShapeOverlay: React.FC<ShapeOverlayProps> = ({
@@ -249,16 +252,23 @@ const ShapeOverlay: React.FC<ShapeOverlayProps> = ({
   onSelect,
   onDragStart,
   isToolLocked = false,
+  clearanceValue,
 }) => {
   const pathData = useMemo(() => {
     if (shape.type === 'tool' && pixelsPerMm) {
-      return generateToolShapePath(shape, toolOutlines, pixelsPerMm);
+      return generateToolShapePath(shape, toolOutlines, pixelsPerMm, clearanceValue);
     }
     return generatePrimitiveShapePath(shape);
-  }, [shape, toolOutlines, pixelsPerMm]);
+  }, [shape, toolOutlines, pixelsPerMm, clearanceValue]);
+
+  const centerX = shape.x + shape.width / 2;
+  const centerY = shape.y + shape.height / 2;
   
   return (
-    <g className="shape-overlay">
+    <g 
+      className="shape-overlay"
+      transform={`rotate(${shape.rotation} ${centerX} ${centerY})`}
+    >
       {/* Shape fill - white with dark border like tooltrace */}
       <path
         d={pathData}
@@ -296,47 +306,52 @@ const ShapeOverlay: React.FC<ShapeOverlayProps> = ({
   );
 };
 
-interface ResizeHandlesProps {
+interface RotateHandleProps {
   shape: LayoutShape;
   zoom: number;
-  onResizeStart: (handle: ResizeHandle, e: React.MouseEvent) => void;
+  onRotateStart: (e: React.MouseEvent) => void;
 }
 
-const ResizeHandles: React.FC<ResizeHandlesProps> = ({ shape, zoom, onResizeStart }) => {
-  const { x, y, width, height } = shape;
+const RotateHandle: React.FC<RotateHandleProps> = ({ shape, zoom, onRotateStart }) => {
+  const { x, y, width, rotation } = shape;
   const handleSize = HANDLE_SIZE / zoom;
-  const halfHandle = handleSize / 2;
+  const centerX = x + width / 2;
+  const centerY = y + shape.height / 2;
   
-  const handles: { handle: ResizeHandle; cx: number; cy: number; cursor: string }[] = [
-    { handle: 'n', cx: x + width / 2, cy: y, cursor: 'ns-resize' },
-    { handle: 's', cx: x + width / 2, cy: y + height, cursor: 'ns-resize' },
-    { handle: 'e', cx: x + width, cy: y + height / 2, cursor: 'ew-resize' },
-    { handle: 'w', cx: x, cy: y + height / 2, cursor: 'ew-resize' },
-    { handle: 'nw', cx: x, cy: y, cursor: 'nwse-resize' },
-    { handle: 'ne', cx: x + width, cy: y, cursor: 'nesw-resize' },
-    { handle: 'sw', cx: x, cy: y + height, cursor: 'nesw-resize' },
-    { handle: 'se', cx: x + width, cy: y + height, cursor: 'nwse-resize' },
-  ];
+  // Position handle above the shape
+  const handleX = centerX;
+  const handleY = y - 24 / zoom;
   
   return (
-    <g className="resize-handles">
-      {handles.map(({ handle, cx, cy, cursor }) => (
-        <rect
-          key={handle}
-          x={cx - halfHandle}
-          y={cy - halfHandle}
-          width={handleSize}
-          height={handleSize}
-          fill="white"
-          stroke="hsl(198, 89%, 50%)"
-          strokeWidth={1 / zoom}
-          style={{ cursor }}
-          onMouseDown={(e) => {
-            e.stopPropagation();
-            onResizeStart(handle, e);
-          }}
-        />
-      ))}
+    <g 
+      className="rotate-handle"
+      transform={`rotate(${rotation} ${centerX} ${centerY})`}
+    >
+      <line
+        x1={centerX}
+        y1={y}
+        x2={handleX}
+        y2={handleY}
+        stroke="hsl(198, 89%, 50%)"
+        strokeWidth={1.5 / zoom}
+      />
+      <circle
+        cx={handleX}
+        cy={handleY}
+        r={handleSize / 1.5}
+        fill="white"
+        stroke="hsl(198, 89%, 50%)"
+        strokeWidth={1.5 / zoom}
+        style={{ cursor: 'alias' }}
+        onMouseDown={onRotateStart}
+      />
+      {/* Anchor point at center */}
+      <circle
+        cx={centerX}
+        cy={centerY}
+        r={2 / zoom}
+        fill="hsl(198, 89%, 50%)"
+      />
     </g>
   );
 };
@@ -408,6 +423,7 @@ export const LayoutWorkspace: React.FC = () => {
     removeLayoutShape,
     addLayoutShape,
     recenterLayoutShapes,
+    clearanceValue,
   } = useAppStore();
   
   const { grid, shapes, selectedShapeId, layoutTool } = layoutState;
@@ -416,10 +432,9 @@ export const LayoutWorkspace: React.FC = () => {
   
   const [view, setView] = useState<ViewState>({ zoom: 1, panX: 0, panY: 0 });
   const [isDragging, setIsDragging] = useState(false);
-  const [isResizing, setIsResizing] = useState(false);
-  const [resizeHandle, setResizeHandle] = useState<ResizeHandle | null>(null);
+  const [isRotating, setIsRotating] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0, shapeX: 0, shapeY: 0 });
-  const [resizeStart, setResizeStart] = useState({ x: 0, y: 0, width: 0, height: 0, shapeX: 0, shapeY: 0 });
+  const [rotateStart, setRotateStart] = useState({ initialAngle: 0, startMouseAngle: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [lastMouse, setLastMouse] = useState({ x: 0, y: 0 });
   // Drawing state for click-and-drag shape creation
@@ -520,26 +535,27 @@ export const LayoutWorkspace: React.FC = () => {
     });
   }, [shapes, selectLayoutShape, layoutTool, removeLayoutShape]);
   
-  // Handle resize start
-  const handleResizeStart = useCallback((shapeId: string, handle: ResizeHandle, e: React.MouseEvent) => {
+  // Handle rotation start
+  const handleRotateStart = useCallback((shapeId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     
     const shape = shapes.find((s) => s.id === shapeId);
     if (!shape) return;
     
+    const pos = screenToSvg(e.clientX, e.clientY);
+    const centerX = shape.x + shape.width / 2;
+    const centerY = shape.y + shape.height / 2;
+    
+    const startAngle = Math.atan2(pos.y - centerY, pos.x - centerX) * (180 / Math.PI);
+    
     selectLayoutShape(shapeId);
-    setIsResizing(true);
-    setResizeHandle(handle);
-    setResizeStart({
-      x: e.clientX,
-      y: e.clientY,
-      width: shape.width,
-      height: shape.height,
-      shapeX: shape.x,
-      shapeY: shape.y,
+    setIsRotating(true);
+    setRotateStart({
+      initialAngle: shape.rotation || 0,
+      startMouseAngle: startAngle,
     });
-  }, [shapes, selectLayoutShape]);
+  }, [shapes, selectLayoutShape, screenToSvg]);
   
   // Handle mouse move
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
@@ -577,53 +593,31 @@ export const LayoutWorkspace: React.FC = () => {
       updateLayoutShape(selectedShapeId, { x: newX, y: newY });
     }
     
-    if (isResizing && selectedShapeId && resizeHandle) {
+    if (isRotating && selectedShapeId) {
       const shape = shapes.find((s) => s.id === selectedShapeId);
       if (!shape) return;
       
-      const dx = (e.clientX - resizeStart.x) / view.zoom;
-      const dy = (e.clientY - resizeStart.y) / view.zoom;
+      const pos = screenToSvg(e.clientX, e.clientY);
+      const centerX = shape.x + shape.width / 2;
+      const centerY = shape.y + shape.height / 2;
       
-      let newX = resizeStart.shapeX;
-      let newY = resizeStart.shapeY;
-      let newWidth = resizeStart.width;
-      let newHeight = resizeStart.height;
+      const currentAngle = Math.atan2(pos.y - centerY, pos.x - centerX) * (180 / Math.PI);
+      const deltaAngle = currentAngle - rotateStart.startMouseAngle;
       
-      // Resize based on handle
-      if (resizeHandle.includes('w')) {
-        const maxDx = resizeStart.width - SHAPE_MIN_SIZE_MM;
-        const actualDx = Math.min(dx, maxDx);
-        newX = resizeStart.shapeX + actualDx;
-        newWidth = resizeStart.width - actualDx;
-      }
-      if (resizeHandle.includes('e')) {
-        newWidth = Math.max(SHAPE_MIN_SIZE_MM, resizeStart.width + dx);
-      }
-      if (resizeHandle.includes('n')) {
-        const maxDy = resizeStart.height - SHAPE_MIN_SIZE_MM;
-        const actualDy = Math.min(dy, maxDy);
-        newY = resizeStart.shapeY + actualDy;
-        newHeight = resizeStart.height - actualDy;
-      }
-      if (resizeHandle.includes('s')) {
-        newHeight = Math.max(SHAPE_MIN_SIZE_MM, resizeStart.height + dy);
+      // Snap to 15 degree increments if shift is pressed
+      let newRotation = rotateStart.initialAngle + deltaAngle;
+      if (e.shiftKey) {
+        newRotation = Math.round(newRotation / 15) * 15;
       }
       
-      // Clamp to layout bounds
-      newX = Math.max(0, newX);
-      newY = Math.max(0, newY);
-      newWidth = Math.min(newWidth, layoutWidthMm - newX);
-      newHeight = Math.min(newHeight, layoutHeightMm - newY);
-      
-      updateLayoutShape(selectedShapeId, { x: newX, y: newY, width: newWidth, height: newHeight });
+      updateLayoutShape(selectedShapeId, { rotation: newRotation });
     }
-  }, [isDragging, isResizing, isPanning, isDrawing, drawingShapeId, drawStart, selectedShapeId, dragStart, resizeStart, resizeHandle, view.zoom, shapes, layoutWidthMm, layoutHeightMm, updateLayoutShape, lastMouse, screenToSvg]);
+  }, [isDragging, isRotating, isPanning, isDrawing, drawingShapeId, drawStart, selectedShapeId, dragStart, rotateStart, view.zoom, shapes, layoutWidthMm, layoutHeightMm, updateLayoutShape, lastMouse, screenToSvg]);
   
   // Handle mouse up
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);
-    setIsResizing(false);
-    setResizeHandle(null);
+    setIsRotating(false);
     setIsPanning(false);
     // End drawing mode
     if (isDrawing) {
@@ -814,16 +808,17 @@ export const LayoutWorkspace: React.FC = () => {
                 }
               }}
               onDragStart={(e) => handleDragStart(shape.id, e)}
-              isToolLocked={layoutTool !== 'select' && shape.type === 'tool'}
+              isToolLocked={layoutTool !== 'select' && layoutTool !== 'erase'}
+              clearanceValue={clearanceValue}
             />
           ))}
           
-          {/* Resize handles for selected shape */}
+          {/* Rotation handle for selected shape */}
           {selectedShape && layoutTool === 'select' && (
-            <ResizeHandles
+            <RotateHandle
               shape={selectedShape}
               zoom={view.zoom}
-              onResizeStart={(handle, e) => handleResizeStart(selectedShape.id, handle, e)}
+              onRotateStart={(e) => handleRotateStart(selectedShape.id, e)}
             />
           )}
         </svg>

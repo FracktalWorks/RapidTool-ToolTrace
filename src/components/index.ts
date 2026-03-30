@@ -5,6 +5,7 @@ export { ExportWorkspace } from './ExportWorkspace';
 export { ControlPanel } from './ControlPanel';
 export { Sidebar } from './Sidebar';
 export { Header } from './Header';
+export { AuthModal } from './AuthModal';
 export { DraggableCorners } from './DraggableCorners';
 export { TracingOverlay } from './TracingOverlay';
 export { ErrorBoundary, Toast, useAsyncError, useToast } from './ErrorBoundary';

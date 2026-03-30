@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 /* ============================================================================
@@ -13,65 +14,117 @@
 }
 
 /* ============================================================================
-   ToolTrace Design System - CSS Custom Properties
-   Following THEME.md specifications
+   ToolTrace Design System - Premium CSS Custom Properties
+   Enhanced color palette with refined, professional tones
    ============================================================================ */
 
 :root {
-  /* Primary Colors */
-  --primary: 198 89% 50%;
-  --primary-foreground: 210 40% 98%;
+  /* Primary - Indigo to Cyan gradient spectrum */
+  --primary: 234 89% 63%;
+  --primary-foreground: 0 0% 100%;
 
   /* Secondary & Accent */
-  --secondary: 210 40% 96%;
-  --secondary-foreground: 222.2 84% 4.9%;
-  --accent: 27 96% 61%;
-  --accent-foreground: 210 40% 98%;
+  --secondary: 220 20% 96%;
+  --secondary-foreground: 222 47% 11%;
+  --accent: 172 66% 50%;
+  --accent-foreground: 0 0% 100%;
 
-  /* Neutral Colors - Light Mode */
-  --background: 0 0% 100%;
-  --foreground: 222.2 84% 4.9%;
+  /* Neutral Colors - Light Mode (warm neutrals) */
+  --background: 220 20% 99%;
+  --foreground: 222 47% 11%;
   --card: 0 0% 100%;
-  --card-foreground: 222.2 84% 4.9%;
-  --muted: 210 40% 96%;
-  --muted-foreground: 215.4 16.3% 46.9%;
-  --border: 214.3 31.8% 91.4%;
-  --input: 214.3 31.8% 91.4%;
-  --ring: 198 89% 50%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --muted: 220 14% 95%;
+  --muted-foreground: 220 9% 46%;
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 234 89% 63%;
 
-  /* Status Colors */
-  --success: 142 76% 47%;
-  --warning: 47 96% 53%;
-  --destructive: 0 84.2% 60.2%;
+  /* Status Colors - Refined */
+  --success: 160 84% 39%;
+  --warning: 38 92% 50%;
+  --destructive: 0 72% 51%;
 
   /* 3D Viewer */
-  --viewer-bg: 210 40% 98%;
-  --grid-lines: 214.3 31.8% 91.4%;
+  --viewer-bg: 220 20% 98%;
+  --grid-lines: 220 13% 91%;
 
   /* Workspace */
-  --workspace-bg: 220 14% 96%;
+  --workspace-bg: 225 14% 97%;
+
+  /* Sidebar */
+  --sidebar-bg: 222 47% 11%;
+  --sidebar-fg: 220 20% 98%;
+  --sidebar-muted: 220 17% 17%;
+  --sidebar-muted-fg: 220 9% 60%;
+  --sidebar-active: 234 89% 63%;
+  --sidebar-border: 220 17% 17%;
+
+  /* Header */
+  --header-bg: 0 0% 100%;
+  --header-border: 220 13% 91%;
+
+  /* Gradients */
+  --gradient-primary: linear-gradient(135deg, hsl(234, 89%, 63%), hsl(190, 95%, 50%));
+  --gradient-accent: linear-gradient(135deg, hsl(172, 66%, 50%), hsl(190, 95%, 50%));
+  --gradient-surface: linear-gradient(135deg, hsl(220, 20%, 99%), hsl(225, 14%, 97%));
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.03), 0 1px 3px 0 rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.03);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.06), 0 4px 6px -4px rgba(0, 0, 0, 0.03);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.06), 0 8px 10px -6px rgba(0, 0, 0, 0.03);
+  --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.15);
+  --shadow-btn: 0 1px 3px rgba(99, 102, 241, 0.25), 0 1px 2px rgba(99, 102, 241, 0.15);
+
+  /* Border Radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
 }
 
 .dark {
-  --background: 220 13% 8%;
-  --foreground: 210 40% 98%;
-  --card: 220 13% 10%;
-  --card-foreground: 210 40% 98%;
-  --muted: 220 13% 16%;
-  --muted-foreground: 215 20.2% 65.1%;
-  --border: 220 13% 18%;
-  --input: 220 13% 18%;
-  --viewer-bg: 220 13% 6%;
-  --grid-lines: 220 13% 20%;
-  --workspace-bg: 220 13% 6%;
+  --background: 222 47% 6%;
+  --foreground: 220 20% 95%;
+  --card: 222 47% 8%;
+  --card-foreground: 220 20% 95%;
+  --popover: 222 47% 8%;
+  --popover-foreground: 220 20% 95%;
+  --muted: 222 28% 14%;
+  --muted-foreground: 220 9% 55%;
+  --border: 222 28% 16%;
+  --input: 222 28% 16%;
+  --viewer-bg: 222 47% 5%;
+  --grid-lines: 222 28% 18%;
+  --workspace-bg: 222 47% 5%;
+
+  --sidebar-bg: 222 47% 6%;
+  --sidebar-fg: 220 20% 95%;
+  --sidebar-muted: 222 28% 12%;
+  --sidebar-muted-fg: 220 9% 55%;
+  --sidebar-border: 222 28% 14%;
+
+  --header-bg: 222 47% 8%;
+  --header-border: 222 28% 14%;
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.2), 0 1px 3px 0 rgba(0, 0, 0, 0.15);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.25), 0 2px 4px -2px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.15);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.35), 0 8px 10px -6px rgba(0, 0, 0, 0.15);
+  --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.25);
+  --shadow-btn: 0 1px 3px rgba(99, 102, 241, 0.35), 0 1px 2px rgba(99, 102, 241, 0.25);
 }
 
 /* ============================================================================
-   Base Styles
+   Base Styles - Premium Typography & Reset
    ============================================================================ */
 
 html {
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 * {
@@ -81,26 +134,45 @@ html {
 body {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.6;
+  letter-spacing: -0.01em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
 }
 
-/* Technical/Monospace text */
+/* Technical/Monospace text - JetBrains Mono */
 .font-tech {
-  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace;
+  font-family: 'JetBrains Mono', 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
 }
 
 /* Brand/Display font */
 .font-brand {
-  font-family: 'Reality Hyper', system-ui, sans-serif;
+  font-family: 'Reality Hyper', 'Inter', system-ui, sans-serif;
+  letter-spacing: -0.02em;
 }
 
 /* ============================================================================
-   Transitions
+   Typography Scale
+   ============================================================================ */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.3;
+}
+
+/* ============================================================================
+   Transitions - Smooth & Premium
    ============================================================================ */
 
 .transition-smooth {
@@ -111,8 +183,12 @@ body {
   transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
+.transition-spring {
+  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
 /* ============================================================================
-   Focus States
+   Focus States - Accessible & Beautiful
    ============================================================================ */
 
 .focus-ring {
@@ -120,30 +196,147 @@ body {
 }
 
 /* ============================================================================
-   Scrollbar Styling
+   Scrollbar Styling - Subtle & Refined
    ============================================================================ */
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: hsl(var(--muted));
-  border-radius: 4px;
+  background: transparent;
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--muted-foreground) / 0.3);
-  border-radius: 4px;
+  background: hsl(var(--muted-foreground) / 0.15);
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground) / 0.5);
+  background: hsl(var(--muted-foreground) / 0.3);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.15) transparent;
 }
 
 /* ============================================================================
-   Animations
+   Custom Range Slider - Premium Style
+   ============================================================================ */
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: hsl(var(--muted));
+  outline: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: hsl(var(--primary));
+  box-shadow: 0 1px 4px rgba(99, 102, 241, 0.3), 0 0 0 3px rgba(99, 102, 241, 0.08);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4), 0 0 0 5px rgba(99, 102, 241, 0.12);
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(1.05);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: hsl(var(--primary));
+  box-shadow: 0 1px 4px rgba(99, 102, 241, 0.3), 0 0 0 3px rgba(99, 102, 241, 0.08);
+  cursor: pointer;
+}
+
+/* ============================================================================
+   Custom Toggle/Switch
+   ============================================================================ */
+
+.toggle-switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 11px;
+  transition: background-color 0.3s ease;
+  cursor: pointer;
+}
+
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.toggle-switch.active::after {
+  transform: translateX(18px);
+}
+
+/* ============================================================================
+   Button Styles - Premium
+   ============================================================================ */
+
+.btn-primary {
+  background: var(--gradient-primary);
+  color: white;
+  border: none;
+  box-shadow: var(--shadow-btn);
+  transition: all 0.2s ease;
+}
+
+.btn-primary:hover {
+  opacity: 0.92;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+  box-shadow: var(--shadow-btn);
+}
+
+/* ============================================================================
+   Card Styles - Glassmorphism Effect
+   ============================================================================ */
+
+.glass-card {
+  background: hsl(var(--card) / 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid hsl(var(--border) / 0.5);
+  box-shadow: var(--shadow-md);
+}
+
+/* ============================================================================
+   Animations - Refined
    ============================================================================ */
 
 @keyframes gradient-shift {
@@ -168,4 +361,165 @@ body {
   50% {
     transform: translateY(-6px);
   }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% center;
+  }
+
+  100% {
+    background-position: 200% center;
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.35);
+  }
+
+  100% {
+    box-shadow: 0 0 0 8px rgba(99, 102, 241, 0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ============================================================================
+   Utility Classes
+   ============================================================================ */
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s ease-out;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.25s ease-out;
+}
+
+.text-gradient {
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Number inputs - remove spinner */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* ============================================================================
+   Tooltip Style
+   ============================================================================ */
+
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) scale(0.95);
+  padding: 4px 10px;
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.15s ease;
+  z-index: 50;
+}
+
+[data-tooltip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
+/* ============================================================================
+   Badge Styles
+   ============================================================================ */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.badge-primary {
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+}
+
+.badge-success {
+  background: hsl(var(--success) / 0.1);
+  color: hsl(var(--success));
+}
+
+.badge-warning {
+  background: hsl(var(--warning) / 0.1);
+  color: hsl(var(--warning));
+}
+
+/* ============================================================================
+   Selection Styling
+   ============================================================================ */
+
+::selection {
+  background: hsl(var(--primary) / 0.15);
+  color: hsl(var(--foreground));
 }

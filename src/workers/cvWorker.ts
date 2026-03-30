@@ -95,13 +95,16 @@ function computeMedian(gray: any): number {
   const mask = new cv.Mat();
   const histSize = [256];
   const ranges = [0, 256];
-  
-  cv.calcHist([gray] as any, [0] as any, mask, hist, histSize as any, ranges as any, false);
-  
+
+  const srcVec = new cv.MatVector();
+  srcVec.push_back(gray);
+  cv.calcHist(srcVec, [0] as any, mask, hist, histSize as any, ranges as any, false);
+  srcVec.delete();
+
   const totalPixels = gray.rows * gray.cols;
   let sum = 0;
   let median = 128;
-  
+
   for (let i = 0; i < 256; i++) {
     sum += hist.data32F[i];
     if (sum >= totalPixels / 2) {
@@ -109,7 +112,7 @@ function computeMedian(gray: any): number {
       break;
     }
   }
-  
+
   deleteMats(hist, mask);
   return median;
 }
@@ -160,9 +163,9 @@ function autoTunedCanny(blurred: any, sigma = 0.33): any {
   const median = computeMedian(blurred);
   const lower = clamp(Math.round((1 - sigma) * median), 10, 100);
   const upper = clamp(Math.round((1 + sigma) * median), 50, 200);
-  
+
   console.log(`Auto Canny: median=${median}, thresholds=[${lower}, ${upper}]`);
-  
+
   const edges = new cv.Mat();
   cv.Canny(blurred, edges, lower, upper);
   return edges;
@@ -179,10 +182,10 @@ function detectPaper(imageData: ImageData) {
 
   const gray = new cv.Mat();
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  
+
   // Strategy 1: White paper detection (primary - paper is always white)
   let best = detectWhitePaper(src, totalArea);
-  
+
   // Strategy 2: Edge-based detection (fallback)
   if (!best || best.confidence < 0.6) {
     const edgeResult = detectPaperByEdges(gray, totalArea);
@@ -213,7 +216,7 @@ function detectPaper(imageData: ImageData) {
     confidence: best.confidence,
     corners,
     pixelsPerMm,
-    message: `Detected (${Math.round(best.confidence * 100)}% confidence)`,
+    message: ``,
   };
 }
 
@@ -223,22 +226,39 @@ function detectWhitePaper(src: any, totalArea: number): { points: Point2D[]; con
   cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
   const hsv = new cv.Mat();
   cv.cvtColor(rgb, hsv, cv.COLOR_RGB2HSV);
-  
+
+  // HEAVY SMOOTHING to remove floor noise/reflections before color mask
+  // This is key to preventing the TR corner from pulling toward floor highlights
+  const blurred = new cv.Mat();
+  cv.GaussianBlur(hsv, blurred, new cv.Size(15, 15), 0);
+
   // White paper: any hue, low saturation, high value
   const mask = new cv.Mat();
-  const lowWhite = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [0, 0, 170, 0]);
-  const highWhite = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [180, 60, 255, 0]);
-  cv.inRange(hsv, lowWhite, highWhite, mask);
-  
-  // Morphological cleanup
-  const closeKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(15, 15));
-  const openKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+  // Value relaxed to 135 to handle shadows; saturation strictly < 70
+  const lowWhite = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), new cv.Scalar(0, 0, 155, 0));
+  const highWhite = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), new cv.Scalar(180, 70, 255, 0));
+  cv.inRange(blurred, lowWhite, highWhite, mask);
+
+  // Morphological cleanup - VERY aggressive opening (31x31) to kill reflections
+  const closeKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(25, 25));
+  const openKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(31, 31));
   cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, closeKernel);
   cv.morphologyEx(mask, mask, cv.MORPH_OPEN, openKernel);
-  
+
+  // EXTRA STEP: Zero out the extreme edges (3% margin) of the mask.
+  // This prevents the TR corner from 'sticking' to background noise at the image boundary.
+  const borderW = Math.round(mask.cols * 0.03);
+  const borderH = Math.round(mask.rows * 0.03);
+
+  // Clear the 4 border strips
+  cv.rectangle(mask, new cv.Point(0, 0), new cv.Point(mask.cols, borderH), new cv.Scalar(0), -1); // Top
+  cv.rectangle(mask, new cv.Point(0, mask.rows - borderH), new cv.Point(mask.cols, mask.rows), new cv.Scalar(0), -1); // Bottom
+  cv.rectangle(mask, new cv.Point(0, 0), new cv.Point(borderW, mask.rows), new cv.Scalar(0), -1); // Left
+  cv.rectangle(mask, new cv.Point(mask.cols - borderW, 0), new cv.Point(mask.cols, mask.rows), new cv.Scalar(0), -1); // Right
+
   const result = findBestQuadrilateral(mask, totalArea);
-  
-  deleteMats(rgb, hsv, mask, lowWhite, highWhite, closeKernel, openKernel);
+
+  deleteMats(rgb, hsv, blurred, mask, lowWhite, highWhite, closeKernel, openKernel);
   return result;
 }
 
@@ -247,29 +267,29 @@ function detectPaperByEdges(gray: any, totalArea: number): { points: Point2D[]; 
   // Apply CLAHE if needed
   let processed = gray;
   const needsCLAHE = needsContrastEnhancement(gray);
-  
+
   if (needsCLAHE) {
     processed = applyCLAHE(gray, 2.0, 8);
     console.log('Applied CLAHE for paper detection');
   }
-  
+
   // Bilateral filter - preserves edges better than Gaussian
   const blurred = new cv.Mat();
   cv.bilateralFilter(processed, blurred, 9, 75, 75);
-  
+
   // Auto-tuned Canny
   const edges = autoTunedCanny(blurred);
-  
+
   // Morphological repair
   const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
   cv.dilate(edges, edges, kernel);
   cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, kernel);
 
   const result = findBestQuadrilateral(edges, totalArea);
-  
+
   if (needsCLAHE) processed.delete();
   deleteMats(blurred, edges, kernel);
-  
+
   return result;
 }
 
@@ -278,19 +298,20 @@ function findBestQuadrilateral(binary: any, totalArea: number): { points: Point2
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
   cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-  
+
   let best: { points: Point2D[]; confidence: number } | null = null;
 
   for (let i = 0; i < contours.size(); i++) {
     const contour = contours.get(i);
     const contourArea = cv.contourArea(contour);
-    
-    // Area filter
-    if (contourArea < totalArea * 0.08 || contourArea > totalArea * 0.98) continue;
+
+    // Area filter: paper must be at least 5% and can be almost the full image (up to 99.5%)
+    if (contourArea < totalArea * 0.05 || contourArea > totalArea * 0.995) continue;
 
     const peri = cv.arcLength(contour, true);
     const approx = new cv.Mat();
-    cv.approxPolyDP(contour, approx, 0.02 * peri, true);
+    // Slightly smoother approximation (0.03 instead of 0.02)
+    cv.approxPolyDP(contour, approx, 0.03 * peri, true);
 
     if (approx.rows === 4) {
       const points: Point2D[] = [];
@@ -302,7 +323,7 @@ function findBestQuadrilateral(binary: any, totalArea: number): { points: Point2
       const isConvex = cv.isContourConvex(approx);
       const solidity = calculateSolidity(contour);
       const rectangularity = calculateRectangularity(contour);
-      
+
       const ordered = orderCorners(points);
       const w = (dist(ordered[0], ordered[1]) + dist(ordered[3], ordered[2])) / 2;
       const h = (dist(ordered[0], ordered[3]) + dist(ordered[1], ordered[2])) / 2;
@@ -314,17 +335,55 @@ function findBestQuadrilateral(binary: any, totalArea: number): { points: Point2
       const convexScore = isConvex ? 0.15 : 0;
       const solidityScore = solidity * 0.15;
       const rectScore = rectangularity * 0.15;
-      
+
       const confidence = aspectScore + areaScore + convexScore + solidityScore + rectScore;
 
-      if (confidence > 0.3 && (!best || confidence > best.confidence)) {
-        best = { points, confidence };
+      if (confidence > 0.4 && (!best || confidence > best.confidence)) {
+        best = { points: ordered, confidence };
+      }
+    } else {
+      // FALLBACK for non-perfect quads: Use the vertices of the minimum area rectangle
+      // We use the Convex Hull first to stabilize the contour
+      const hull = new cv.Mat();
+      cv.convexHull(contour, hull);
+      const rotatedRect = cv.minAreaRect(hull);
+      hull.delete();
+
+      const vertices = cv.RotatedRect.points(rotatedRect);
+
+      let points: Point2D[] = [];
+      for (let j = 0; j < 4; j++) {
+        points.push({ x: vertices[j].x, y: vertices[j].y });
       }
 
-      approx.delete();
-    } else {
-      approx.delete();
+      // Final sanity fix for the TR corner:
+      // If a point is literally touching the very top or very right edge of the image,
+      // it's likely noise. We clamp it back toward the other points.
+      const margin = 5;
+      const w = binary.cols;
+      const h = binary.rows;
+
+      points = points.map(p => ({
+        x: p.x >= w - margin ? p.x - margin * 4 : (p.x <= margin ? p.x + margin * 4 : p.x),
+        y: p.y <= margin ? p.y + margin * 4 : (p.y >= h - margin ? p.y - margin * 4 : p.y)
+      }));
+
+      const ordered = orderCorners(points);
+      const solidity = calculateSolidity(contour);
+      const rectangularity = calculateRectangularity(contour);
+
+      // Only accept if it looks reasonably like a solid rectangle
+      if (solidity > 0.8 && rectangularity > 0.65) {
+        const areaScore = Math.min(contourArea / totalArea / 0.3, 1) * 0.4;
+        const confidence = areaScore + (solidity * 0.3) + (rectangularity * 0.2);
+
+        if (confidence > 0.45 && (!best || confidence > best.confidence)) {
+          best = { points: ordered, confidence };
+        }
+      }
     }
+
+    approx.delete();
   }
 
   deleteMats(contours, hierarchy);
@@ -344,7 +403,7 @@ function traceTool(imageData: ImageData, clickX: number, clickY: number) {
   // PRIMARY STRATEGY: Paper-is-white silhouette detection
   // Since paper is white, anything NOT white is a potential tool
   let bestResult = traceByPaperSilhouette(src, x, y);
-  
+
   // Fallback: Otsu-based detection
   if (!bestResult) {
     console.log('Silhouette failed, trying Otsu fallback');
@@ -361,68 +420,68 @@ function traceByPaperSilhouette(src: any, x: number, y: number): { points: Point
   // Convert to grayscale for illumination normalization
   const gray = new cv.Mat();
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  
+
   // SHADOW REMOVAL: Illumination normalization
   // Step 1: Heavy blur to capture lighting only (shadows, uneven illumination)
   const lighting = new cv.Mat();
   cv.GaussianBlur(gray, lighting, new cv.Size(51, 51), 0);
-  
+
   // Step 2: Divide original by lighting map to normalize illumination
   // Convert to float for division
   const grayFloat = new cv.Mat();
   const lightingFloat = new cv.Mat();
   gray.convertTo(grayFloat, cv.CV_32F);
   lighting.convertTo(lightingFloat, cv.CV_32F);
-  
+
   // Add small epsilon to avoid division by zero
   const epsilon = new cv.Mat(lightingFloat.rows, lightingFloat.cols, cv.CV_32F, new cv.Scalar(1.0));
   cv.add(lightingFloat, epsilon, lightingFloat);
-  
+
   // Divide and scale back to 0-255
   const normalized = new cv.Mat();
   cv.divide(grayFloat, lightingFloat, normalized, 255.0);
-  
+
   // Convert back to 8-bit
   const normalizedU8 = new cv.Mat();
   normalized.convertTo(normalizedU8, cv.CV_8U);
-  
+
   // Now threshold the shadow-free image
   // Paper (white) will have high values, tools (dark) will have low values
   const toolMask = new cv.Mat();
   // Use adaptive threshold for robustness, or simple threshold
   // Values below ~200 are likely tools (not white paper)
   cv.threshold(normalizedU8, toolMask, 200, 255, cv.THRESH_BINARY_INV);
-  
+
   // Clean up with morphological operations
   const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
   cv.morphologyEx(toolMask, toolMask, cv.MORPH_CLOSE, kernel);
   cv.morphologyEx(toolMask, toolMask, cv.MORPH_OPEN, kernel);
-  
+
   // Additional closing to merge nearby regions into single silhouette
   const largeKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(15, 15));
   cv.morphologyEx(toolMask, toolMask, cv.MORPH_CLOSE, largeKernel);
-  
+
   // Find EXTERNAL contours only for clean outer boundary
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
   cv.findContours(toolMask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-  
+
   let bestContour: any = null;
   let bestArea = Infinity;
-  
+
   // Find smallest contour containing the click point
   for (let i = 0; i < contours.size(); i++) {
     const contour = contours.get(i);
     const area = cv.contourArea(contour);
     if (area < 1000) continue;
-    
+
     const distance = cv.pointPolygonTest(contour, new cv.Point(x, y), true);
     if (distance >= 0 && area < bestArea) {
       bestContour = contour;
       bestArea = area;
     }
   }
-  
+
   // If no containing contour, find nearest one within 50px
   if (!bestContour) {
     let minDist = 50;
@@ -430,7 +489,7 @@ function traceByPaperSilhouette(src: any, x: number, y: number): { points: Point
       const contour = contours.get(i);
       const area = cv.contourArea(contour);
       if (area < 1000) continue;
-      
+
       const distance = cv.pointPolygonTest(contour, new cv.Point(x, y), true);
       if (Math.abs(distance) < minDist) {
         minDist = Math.abs(distance);
@@ -439,13 +498,13 @@ function traceByPaperSilhouette(src: any, x: number, y: number): { points: Point
       }
     }
   }
-  
+
   let result = null;
   if (bestContour) {
     result = extractContourPoints(bestContour, 0, 0, bestArea);
     console.log('Found by paper silhouette (shadow-corrected), area:', bestArea);
   }
-  
+
   // Cleanup
   deleteMats(gray, lighting, grayFloat, lightingFloat, epsilon, normalized, normalizedU8, toolMask, kernel, largeKernel, contours, hierarchy);
   return result;
@@ -455,39 +514,39 @@ function traceByPaperSilhouette(src: any, x: number, y: number): { points: Point
 function traceByOtsuFallback(src: any, x: number, y: number): { points: Point2D[]; area: number } | null {
   const gray = new cv.Mat();
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  
+
   const binary = new cv.Mat();
   cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-  
+
   const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
   cv.morphologyEx(binary, binary, cv.MORPH_CLOSE, kernel);
   cv.morphologyEx(binary, binary, cv.MORPH_OPEN, kernel);
-  
+
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
   cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-  
+
   let bestContour: any = null;
   let bestArea = Infinity;
-  
+
   for (let i = 0; i < contours.size(); i++) {
     const contour = contours.get(i);
     const area = cv.contourArea(contour);
     if (area < 1000) continue;
-    
+
     const distance = cv.pointPolygonTest(contour, new cv.Point(x, y), true);
     if (distance >= 0 && area < bestArea) {
       bestContour = contour;
       bestArea = area;
     }
   }
-  
+
   let result = null;
   if (bestContour) {
     result = extractContourPoints(bestContour, 0, 0, bestArea);
     console.log('Found by Otsu fallback, area:', bestArea);
   }
-  
+
   deleteMats(gray, binary, kernel, contours, hierarchy);
   return result;
 }
@@ -496,23 +555,23 @@ function traceByOtsuFallback(src: any, x: number, y: number): { points: Point2D[
 function traceRegion(imageData: ImageData, rect: { x: number; y: number; width: number; height: number }) {
   console.log('traceRegion called:', rect);
   const src = cv.matFromImageData(imageData);
-  
+
   const x = Math.max(0, Math.round(rect.x));
   const y = Math.max(0, Math.round(rect.y));
   const w = Math.min(src.cols - x, Math.round(rect.width));
   const h = Math.min(src.rows - y, Math.round(rect.height));
-  
+
   if (w < 10 || h < 10) {
     src.delete();
     return null;
   }
-  
+
   const roi = src.roi(new cv.Rect(x, y, w, h));
   const result = findMainObjectInRegion(roi, x, y);
-  
+
   roi.delete();
   src.delete();
-  
+
   console.log('traceRegion result:', result ? `${result.points.length} points` : 'null');
   return result;
 }
@@ -521,55 +580,55 @@ function traceRegion(imageData: ImageData, rect: { x: number; y: number; width: 
 function findMainObjectInRegion(roi: any, offsetX: number, offsetY: number): { points: Point2D[]; area: number } | null {
   const gray = new cv.Mat();
   cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
-  
+
   // Apply CLAHE if needed
   let processed = gray;
   const needsCLAHE = needsContrastEnhancement(gray);
   if (needsCLAHE) {
     processed = applyCLAHE(gray, 3.0, 8);
   }
-  
+
   // Bilateral filter
   const blurred = new cv.Mat();
   cv.bilateralFilter(processed, blurred, 9, 75, 75);
-  
+
   // Otsu's thresholding
   const binary = new cv.Mat();
   cv.threshold(blurred, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-  
+
   // Morphological repair
   const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
   cv.morphologyEx(binary, binary, cv.MORPH_CLOSE, kernel);
   cv.morphologyEx(binary, binary, cv.MORPH_OPEN, kernel);
-  
+
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
   cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-  
+
   // Find largest valid contour
   let largestContour: any = null;
   let largestArea = 0;
-  
+
   for (let i = 0; i < contours.size(); i++) {
     const contour = contours.get(i);
     const area = cv.contourArea(contour);
-    
+
     if (area < 200) continue;
     const solidity = calculateSolidity(contour);
     if (solidity < 0.3) continue;
-    
+
     if (area > largestArea) {
       largestArea = area;
       largestContour = contour;
     }
   }
-  
+
   let result = null;
-  
+
   if (largestContour && largestArea > 200) {
     result = extractContourPoints(largestContour, offsetX, offsetY, largestArea);
   }
-  
+
   if (needsCLAHE && processed !== gray) processed.delete();
   deleteMats(gray, blurred, binary, contours, hierarchy, kernel);
   return result;
@@ -577,27 +636,27 @@ function findMainObjectInRegion(roi: any, offsetX: number, offsetY: number): { p
 
 // Extract contour points with tight approximation for precision
 function extractContourPoints(
-  contour: any, 
-  offsetX: number, 
-  offsetY: number, 
+  contour: any,
+  offsetX: number,
+  offsetY: number,
   area: number
 ): { points: Point2D[]; area: number } {
   const peri = cv.arcLength(contour, true);
-  
+
   // Tighter epsilon for tool precision (smaller = more detail)
   const epsilon = 0.002 * peri;
-  
+
   const approx = new cv.Mat();
   cv.approxPolyDP(contour, approx, epsilon, true);
-  
+
   const points: Point2D[] = [];
   for (let j = 0; j < approx.rows; j++) {
-    points.push({ 
-      x: approx.data32S[j * 2] + offsetX, 
-      y: approx.data32S[j * 2 + 1] + offsetY 
+    points.push({
+      x: approx.data32S[j * 2] + offsetX,
+      y: approx.data32S[j * 2 + 1] + offsetY
     });
   }
-  
+
   approx.delete();
   return { points, area };
 }

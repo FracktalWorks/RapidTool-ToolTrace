@@ -100,11 +100,11 @@ const PaperStepPanel: React.FC = () => {
         if (result.pixelsPerMm) {
           setPixelsPerMm(result.pixelsPerMm);
         }
-        setDetectionMessage("Paper detected successfully");
+        setDetectionMessage(result.message || "Paper detected successfully");
       } else {
         setDetectionMessage(
           result.message ||
-            "Could not detect paper. Please adjust corners manually.",
+          "Could not detect paper. Please adjust corners manually.",
         );
         setPaperDetected(false, 0);
       }
@@ -160,9 +160,9 @@ const PaperStepPanel: React.FC = () => {
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-[hsl(var(--primary))]" />
-                <h3 className="text-xs font-semibold">Quick Start</h3>
+                <h3 className="text-[13px] font-semibold" style={{ letterSpacing: '-0.02em' }}>Quick Start</h3>
               </div>
-              <p className="text-[11px] text-[hsl(var(--muted-foreground))] leading-relaxed">
+              <p className="text-[12px] text-[hsl(var(--muted-foreground))] leading-relaxed">
                 Upload a photo of your tools on white A4 paper. We'll
                 auto-detect and trace them.
               </p>
@@ -172,46 +172,46 @@ const PaperStepPanel: React.FC = () => {
             <div className="space-y-2.5">
               <div className="flex items-center gap-2">
                 <Lightbulb className="w-4 h-4 text-[hsl(var(--warning))]" />
-                <h3 className="text-xs font-semibold">Best Practices</h3>
+                <h3 className="text-[13px] font-semibold" style={{ letterSpacing: '-0.02em' }}>Best Practices</h3>
               </div>
 
               <div className="space-y-2">
                 {/* Tip 1 */}
-                <div className="flex gap-2.5 p-2.5 bg-[hsl(var(--muted)/0.4)] rounded-lg">
+                <div className="flex gap-2.5 p-3 bg-[hsl(var(--muted)/0.4)] rounded-xl">
                   <div className="w-6 h-6 rounded-md bg-[hsl(var(--primary)/0.1)] flex items-center justify-center shrink-0">
                     <FileText className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />
                   </div>
                   <div>
-                    <p className="text-[11px] font-medium">
+                    <p className="text-[12px] font-medium">
                       Use White A4 Paper
                     </p>
-                    <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-0.5">
+                    <p className="text-[11px] text-[hsl(var(--muted-foreground))] mt-0.5">
                       Standard A4 provides accurate scale
                     </p>
                   </div>
                 </div>
 
                 {/* Tip 2 */}
-                <div className="flex gap-2.5 p-2.5 bg-[hsl(var(--muted)/0.4)] rounded-lg">
+                <div className="flex gap-2.5 p-3 bg-[hsl(var(--muted)/0.4)] rounded-xl">
                   <div className="w-6 h-6 rounded-md bg-[hsl(var(--primary)/0.1)] flex items-center justify-center shrink-0">
                     <Camera className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />
                   </div>
                   <div>
-                    <p className="text-[11px] font-medium">Shoot from Above</p>
-                    <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-0.5">
+                    <p className="text-[12px] font-medium">Shoot from Above</p>
+                    <p className="text-[11px] text-[hsl(var(--muted-foreground))] mt-0.5">
                       Keep camera parallel to paper
                     </p>
                   </div>
                 </div>
 
                 {/* Tip 3 */}
-                <div className="flex gap-2.5 p-2.5 bg-[hsl(var(--muted)/0.4)] rounded-lg">
+                <div className="flex gap-2.5 p-3 bg-[hsl(var(--muted)/0.4)] rounded-xl">
                   <div className="w-6 h-6 rounded-md bg-[hsl(var(--primary)/0.1)] flex items-center justify-center shrink-0">
                     <Lightbulb className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />
                   </div>
                   <div>
-                    <p className="text-[11px] font-medium">Good Lighting</p>
-                    <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-0.5">
+                    <p className="text-[12px] font-medium">Good Lighting</p>
+                    <p className="text-[11px] text-[hsl(var(--muted-foreground))] mt-0.5">
                       Avoid shadows for cleaner detection
                     </p>
                   </div>
@@ -222,7 +222,7 @@ const PaperStepPanel: React.FC = () => {
 
           {/* Bottom section - What Happens Next */}
           <div className="pt-3 mt-auto border-t border-[hsl(var(--border))]">
-            <h3 className="text-xs font-semibold text-[hsl(var(--foreground))] mb-3">
+            <h3 className="text-[13px] font-semibold text-[hsl(var(--foreground))] mb-3" style={{ letterSpacing: '-0.02em' }}>
               What Happens Next
             </h3>
             <div className="space-y-2">
@@ -230,7 +230,7 @@ const PaperStepPanel: React.FC = () => {
                 <div className="w-5 h-5 rounded-full bg-[hsl(var(--primary))] text-white flex items-center justify-center text-[10px] font-bold shrink-0">
                   1
                 </div>
-                <span className="text-[11px] text-[hsl(var(--muted-foreground))]">
+                <span className="text-[12px] text-[hsl(var(--muted-foreground))]">
                   Paper auto-detected
                 </span>
               </div>
@@ -238,7 +238,7 @@ const PaperStepPanel: React.FC = () => {
                 <div className="w-5 h-5 rounded-full bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))] flex items-center justify-center text-[10px] font-bold shrink-0">
                   2
                 </div>
-                <span className="text-[11px] text-[hsl(var(--muted-foreground))]">
+                <span className="text-[12px] text-[hsl(var(--muted-foreground))]">
                   Click to trace tools
                 </span>
               </div>
@@ -246,7 +246,7 @@ const PaperStepPanel: React.FC = () => {
                 <div className="w-5 h-5 rounded-full bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))] flex items-center justify-center text-[10px] font-bold shrink-0">
                   3
                 </div>
-                <span className="text-[11px] text-[hsl(var(--muted-foreground))]">
+                <span className="text-[12px] text-[hsl(var(--muted-foreground))]">
                   Arrange in layout
                 </span>
               </div>
@@ -254,7 +254,7 @@ const PaperStepPanel: React.FC = () => {
                 <div className="w-5 h-5 rounded-full bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))] flex items-center justify-center text-[10px] font-bold shrink-0">
                   4
                 </div>
-                <span className="text-[11px] text-[hsl(var(--muted-foreground))]">
+                <span className="text-[12px] text-[hsl(var(--muted-foreground))]">
                   Export SVG or STL
                 </span>
               </div>
@@ -266,13 +266,13 @@ const PaperStepPanel: React.FC = () => {
         <>
           <div className="flex-1 overflow-y-auto space-y-3">
             {/* Loaded image indicator */}
-            <div className="flex items-center gap-2.5 p-2.5 bg-[hsl(var(--muted)/0.5)] rounded-lg">
-              <div className="w-8 h-8 rounded bg-[hsl(var(--background))] flex items-center justify-center">
+            <div className="flex items-center gap-2.5 p-3 bg-[hsl(var(--muted)/0.4)] rounded-xl">
+              <div className="w-8 h-8 rounded-lg bg-[hsl(var(--background))] flex items-center justify-center">
                 <ImageIcon className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium truncate">{imageFile.name}</p>
-                <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                <p className="text-[13px] font-medium truncate">{imageFile.name}</p>
+                <p className="text-[11px] text-[hsl(var(--muted-foreground))]">
                   {(imageFile.size / 1024 / 1024).toFixed(2)} MB
                 </p>
               </div>
@@ -290,33 +290,33 @@ const PaperStepPanel: React.FC = () => {
           <div className="pt-3 border-t border-[hsl(var(--border))] mt-3 space-y-3">
             {/* Detection Status */}
             {isDetecting ? (
-              <div className="flex items-center gap-2 p-2.5 bg-[hsl(var(--primary)/0.05)] border border-[hsl(var(--primary)/0.1)] rounded-lg">
+              <div className="flex items-center gap-2 p-3 bg-[hsl(var(--primary)/0.05)] border border-[hsl(var(--primary)/0.1)] rounded-xl">
                 <Loader2 className="w-3.5 h-3.5 text-[hsl(var(--primary))] animate-spin" />
-                <span className="text-xs text-[hsl(var(--primary))]">
+                <span className="text-[13px] text-[hsl(var(--primary))] font-medium">
                   Detecting paper...
                 </span>
               </div>
             ) : paperDetected ? (
               <>
-                <div className="flex items-center gap-2 p-2.5 bg-[hsl(var(--success)/0.08)] border border-[hsl(var(--success)/0.15)] rounded-lg">
+                <div className="flex items-center gap-2 p-3 bg-[hsl(var(--success)/0.06)] border border-[hsl(var(--success)/0.12)] rounded-xl">
                   <Check className="w-3.5 h-3.5 text-[hsl(var(--success))]" />
-                  <span className="text-xs text-[hsl(var(--success))]">
-                    Detected ({Math.round(paperConfidence * 100)}% confidence)
+                  <span className="text-[13px] text-[hsl(var(--success))] font-medium">
+                    {detectionMessage || "Detected"}
                   </span>
                 </div>
 
                 {pixelsPerMm && (
-                  <div className="flex items-center justify-between p-2.5 bg-[hsl(var(--muted)/0.5)] rounded-lg">
-                    <span className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase tracking-wide">
+                  <div className="flex items-center justify-between p-3 bg-[hsl(var(--muted)/0.4)] rounded-xl">
+                    <span className="text-[11px] text-[hsl(var(--muted-foreground))] uppercase tracking-wider font-semibold">
                       Scale
                     </span>
-                    <span className="text-xs font-medium font-tech">
+                    <span className="text-[13px] font-semibold font-tech">
                       {pixelsPerMm.toFixed(2)} px/mm
                     </span>
                   </div>
                 )}
 
-                <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                <p className="text-[11px] text-[hsl(var(--muted-foreground))] font-medium">
                   Drag corner handles in viewport to adjust if needed.
                 </p>
 
@@ -324,9 +324,9 @@ const PaperStepPanel: React.FC = () => {
                   <button
                     onClick={handleRetryDetection}
                     className="
-                      flex-1 h-8 px-3 border border-[hsl(var(--border))]
-                      rounded text-xs hover:bg-[hsl(var(--muted))]
-                      transition-colors flex items-center justify-center gap-1.5
+                      flex-1 h-9 px-3 border border-[hsl(var(--border))]
+                      rounded-xl text-[13px] font-medium hover:bg-[hsl(var(--muted))]
+                      transition-all duration-200 flex items-center justify-center gap-1.5
                     "
                   >
                     <RefreshCw className="w-3 h-3" />
@@ -335,10 +335,12 @@ const PaperStepPanel: React.FC = () => {
                   <button
                     onClick={() => setCurrentStep("tools")}
                     className="
-                      flex-1 h-8 px-3 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]
-                      rounded text-xs font-medium hover:bg-[hsl(var(--primary)/0.9)]
-                      transition-colors flex items-center justify-center gap-1.5
+                      flex-1 h-9 px-3
+                      rounded-xl text-[13px] font-semibold
+                      transition-all duration-200 flex items-center justify-center gap-1.5
+                      text-white
                     "
+                    style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-btn)' }}
                   >
                     Continue
                     <ChevronRight className="w-3 h-3" />
@@ -348,9 +350,9 @@ const PaperStepPanel: React.FC = () => {
             ) : (
               <>
                 {detectionMessage && (
-                  <div className="flex items-start gap-2 p-2.5 bg-[hsl(var(--warning)/0.08)] border border-[hsl(var(--warning)/0.15)] rounded-lg">
+                  <div className="flex items-start gap-2 p-3 bg-[hsl(var(--warning)/0.06)] border border-[hsl(var(--warning)/0.12)] rounded-xl">
                     <AlertCircle className="w-3.5 h-3.5 text-[hsl(var(--warning))] shrink-0 mt-0.5" />
-                    <span className="text-[10px] text-[hsl(var(--warning))]">
+                    <span className="text-[11px] text-[hsl(var(--warning))] font-medium">
                       {detectionMessage}
                     </span>
                   </div>
@@ -361,9 +363,9 @@ const PaperStepPanel: React.FC = () => {
                     onClick={handleManualMode}
                     disabled={isDetecting}
                     className="
-                      flex-1 h-8 px-3 border border-[hsl(var(--border))]
-                      rounded text-xs hover:bg-[hsl(var(--muted))]
-                      transition-colors
+                      flex-1 h-9 px-3 border border-[hsl(var(--border))]
+                      rounded-xl text-[13px] font-medium hover:bg-[hsl(var(--muted))]
+                      transition-all duration-200
                     "
                   >
                     Set Manually
@@ -372,11 +374,12 @@ const PaperStepPanel: React.FC = () => {
                     onClick={runAutoDetect}
                     disabled={isDetecting}
                     className="
-                      flex-1 h-8 px-3 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]
-                      rounded text-xs font-medium hover:bg-[hsl(var(--primary)/0.9)]
-                      transition-colors flex items-center justify-center gap-1.5
-                      disabled:opacity-50 disabled:cursor-not-allowed
+                      flex-1 h-9 px-3
+                      rounded-xl text-[13px] font-semibold
+                      transition-all duration-200 flex items-center justify-center gap-1.5
+                      disabled:opacity-50 disabled:cursor-not-allowed text-white
                     "
+                    style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-btn)' }}
                   >
                     {isDetecting ? (
                       <>
@@ -423,9 +426,9 @@ const ToolsStepPanel: React.FC = () => {
     <div className="h-full flex flex-col">
       {/* Prerequisite Warning Banner */}
       {isDisabled && (
-        <div className="mb-3 p-2.5 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.2)] rounded-lg flex items-center gap-2">
+        <div className="mb-3 p-3 bg-[hsl(var(--warning)/0.08)] border border-[hsl(var(--warning)/0.15)] rounded-xl flex items-center gap-2">
           <AlertCircle className="w-4 h-4 text-[hsl(var(--warning))] shrink-0" />
-          <p className="text-[10px] text-[hsl(var(--warning))]">
+          <p className="text-[12px] text-[hsl(var(--warning))] font-medium">
             Complete paper detection first to enable tracing
           </p>
         </div>
@@ -437,7 +440,7 @@ const ToolsStepPanel: React.FC = () => {
       >
         {/* Tracing Mode Selection */}
         <div className="space-y-1.5">
-          <label className="text-[10px] font-medium text-[hsl(var(--muted-foreground))] uppercase tracking-wide">
+          <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
             Tracing Mode
           </label>
           <div className="grid grid-cols-2 gap-2">
@@ -445,19 +448,18 @@ const ToolsStepPanel: React.FC = () => {
               onClick={() => setActiveTool("box")}
               disabled={isDisabled}
               className={`
-                p-2.5 rounded-lg border transition-all text-left
-                ${
-                  activeTool === "box"
-                    ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.08)]"
-                    : "border-[hsl(var(--border))] hover:border-[hsl(var(--primary)/0.5)] hover:bg-[hsl(var(--muted)/0.5)]"
+                p-3 rounded-xl border transition-all duration-200 text-left
+                ${activeTool === "box"
+                  ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.08)]"
+                  : "border-[hsl(var(--border))] hover:border-[hsl(var(--primary)/0.5)] hover:bg-[hsl(var(--muted)/0.5)]"
                 }
               `}
             >
               <SquareDashed
                 className={`w-4 h-4 mb-1.5 ${activeTool === "box" ? "text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"}`}
               />
-              <div className="text-xs font-medium">Box Select</div>
-              <div className="text-[10px] text-[hsl(var(--muted-foreground))] mt-0.5">
+              <div className="text-[13px] font-medium">Box Select</div>
+              <div className="text-[11px] text-[hsl(var(--muted-foreground))] mt-0.5">
                 Draw rectangle area
               </div>
             </button>
@@ -465,19 +467,18 @@ const ToolsStepPanel: React.FC = () => {
               onClick={() => setActiveTool("trace")}
               disabled={isDisabled}
               className={`
-                p-2.5 rounded-lg border transition-all text-left
-                ${
-                  activeTool === "trace"
-                    ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.08)]"
-                    : "border-[hsl(var(--border))] hover:border-[hsl(var(--primary)/0.5)] hover:bg-[hsl(var(--muted)/0.5)]"
+                p-3 rounded-xl border transition-all duration-200 text-left
+                ${activeTool === "trace"
+                  ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.08)]"
+                  : "border-[hsl(var(--border))] hover:border-[hsl(var(--primary)/0.5)] hover:bg-[hsl(var(--muted)/0.5)]"
                 }
               `}
             >
               <MousePointerClick
                 className={`w-4 h-4 mb-1.5 ${activeTool === "trace" ? "text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"}`}
               />
-              <div className="text-xs font-medium">Click Trace</div>
-              <div className="text-[10px] text-[hsl(var(--muted-foreground))] mt-0.5">
+              <div className="text-[13px] font-medium">Click Trace</div>
+              <div className="text-[11px] text-[hsl(var(--muted-foreground))] mt-0.5">
                 Auto-detect on click
               </div>
             </button>
@@ -485,8 +486,8 @@ const ToolsStepPanel: React.FC = () => {
         </div>
 
         {/* Mode Info */}
-        <div className="p-2.5 bg-[hsl(var(--muted)/0.5)] rounded-lg">
-          <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+        <div className="p-3 bg-[hsl(var(--muted)/0.4)] rounded-xl">
+          <p className="text-[12px] text-[hsl(var(--muted-foreground))] leading-relaxed">
             {activeTool === "box"
               ? "Draw a rectangle around the tool to trace it"
               : "Click directly on a tool to auto-detect its outline"}
@@ -495,7 +496,7 @@ const ToolsStepPanel: React.FC = () => {
 
         {/* Tool List */}
         <div className="space-y-1.5">
-          <label className="text-[10px] font-medium text-[hsl(var(--muted-foreground))] uppercase tracking-wide">
+          <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
             Traced Tools ({toolOutlines.length})
           </label>
           {toolOutlines.length > 0 ? (
@@ -504,11 +505,10 @@ const ToolsStepPanel: React.FC = () => {
                 <div
                   key={outline.id}
                   className={`
-                    flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors
-                    ${
-                      outline.id === selectedOutlineId
-                        ? "bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.2)]"
-                        : "hover:bg-[hsl(var(--muted)/0.5)] border border-transparent"
+                    flex items-center gap-2 p-2.5 rounded-xl cursor-pointer transition-all duration-200
+                    ${outline.id === selectedOutlineId
+                      ? "bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.2)]"
+                      : "hover:bg-[hsl(var(--muted)/0.5)] border border-transparent"
                     }
                   `}
                   onClick={() => selectOutline(outline.id)}
@@ -518,11 +518,11 @@ const ToolsStepPanel: React.FC = () => {
                     style={{ backgroundColor: outline.color }}
                   />
                   <div className="flex-1 min-w-0">
-                    <span className="text-xs truncate block">
+                    <span className="text-[13px] font-medium truncate block">
                       {outline.name}
                     </span>
                     {outline.areaInMm2 && (
-                      <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                      <span className="text-[11px] text-[hsl(var(--muted-foreground))]">
                         {outline.areaInMm2.toFixed(1)} mm²
                       </span>
                     )}
@@ -540,9 +540,9 @@ const ToolsStepPanel: React.FC = () => {
               ))}
             </div>
           ) : (
-            <div className="p-3 border border-dashed border-[hsl(var(--border))] rounded-lg text-center">
+            <div className="p-4 border border-dashed border-[hsl(var(--border))] rounded-xl text-center">
               <Wrench className="w-5 h-5 mx-auto mb-1.5 text-[hsl(var(--muted-foreground))] opacity-50" />
-              <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+              <p className="text-[12px] text-[hsl(var(--muted-foreground))]">
                 No tools traced yet. Click on a tool in the image to begin.
               </p>
             </div>
@@ -557,10 +557,10 @@ const ToolsStepPanel: React.FC = () => {
         {/* Clearance Control */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
-            <label className="text-[10px] font-medium text-[hsl(var(--muted-foreground))] uppercase tracking-wide">
+            <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
               Clearance
             </label>
-            <span className="text-xs font-medium font-tech">
+            <span className="text-[13px] font-semibold font-tech">
               {clearanceValue.toFixed(1)}mm
             </span>
           </div>
@@ -581,11 +581,12 @@ const ToolsStepPanel: React.FC = () => {
           onClick={() => setCurrentStep("layout")}
           disabled={toolOutlines.length === 0}
           className="
-            w-full h-8 px-3 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]
-            rounded text-xs font-medium hover:bg-[hsl(var(--primary)/0.9)]
-            transition-colors flex items-center justify-center gap-1.5
-            disabled:opacity-50 disabled:cursor-not-allowed
+            w-full h-9 px-3
+            rounded-xl text-[13px] font-semibold
+            transition-all duration-200 flex items-center justify-center gap-1.5
+            disabled:opacity-50 disabled:cursor-not-allowed text-white
           "
+          style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-btn)' }}
         >
           Continue
           <ChevronRight className="w-3 h-3" />
@@ -632,10 +633,9 @@ const ExportStepPanel: React.FC = () => {
         points:
           clearanceValue > 0
             ? offsetPolygon(
-                outline.smoothedPoints,
-                clearanceValue * pixelsPerMm,
-                { joinType: "round" },
-              )
+              outline.smoothedPoints,
+              clearanceValue * pixelsPerMm,
+            )
             : outline.smoothedPoints,
         color: outline.color,
       }));
@@ -663,9 +663,9 @@ const ExportStepPanel: React.FC = () => {
     <div className="h-full flex flex-col">
       {/* Prerequisite Warning Banner */}
       {isDisabled && (
-        <div className="mb-3 p-2.5 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.2)] rounded-lg flex items-start gap-2">
+        <div className="mb-3 p-3 bg-[hsl(var(--warning)/0.08)] border border-[hsl(var(--warning)/0.15)] rounded-xl flex items-start gap-2">
           <AlertCircle className="w-4 h-4 text-[hsl(var(--warning))] shrink-0 mt-0.5" />
-          <div className="text-[10px] text-[hsl(var(--warning))]">
+          <div className="text-[12px] text-[hsl(var(--warning))] font-medium">
             {!hasTools && <p>• Trace tools in step 2</p>}
             {!hasLayout && <p>• Configure layout in step 3</p>}
           </div>
@@ -678,7 +678,7 @@ const ExportStepPanel: React.FC = () => {
       >
         {/* Format Selection */}
         <div className="space-y-1.5">
-          <label className="text-[10px] font-medium text-[hsl(var(--muted-foreground))] uppercase tracking-wide">
+          <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
             Export Format
           </label>
           <div className="grid grid-cols-2 gap-2">
@@ -686,11 +686,10 @@ const ExportStepPanel: React.FC = () => {
               onClick={() => setExportFormat("svg")}
               disabled={isDisabled}
               className={`
-                h-8 px-3 rounded font-medium text-xs transition-colors
-                ${
-                  exportFormat === "svg"
-                    ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]"
-                    : "bg-[hsl(var(--muted)/0.5)] text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))]"
+                h-9 px-3 rounded-xl font-semibold text-[13px] transition-all duration-200
+                ${exportFormat === "svg"
+                  ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]"
+                  : "bg-[hsl(var(--muted)/0.5)] text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))]"
                 }
               `}
             >
@@ -700,11 +699,10 @@ const ExportStepPanel: React.FC = () => {
               onClick={() => setExportFormat("stl")}
               disabled={isDisabled}
               className={`
-                h-8 px-3 rounded font-medium text-xs transition-colors
-                ${
-                  exportFormat === "stl"
-                    ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]"
-                    : "bg-[hsl(var(--muted)/0.5)] text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))]"
+                h-9 px-3 rounded-xl font-semibold text-[13px] transition-all duration-200
+                ${exportFormat === "stl"
+                  ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]"
+                  : "bg-[hsl(var(--muted)/0.5)] text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))]"
                 }
               `}
             >
@@ -714,8 +712,8 @@ const ExportStepPanel: React.FC = () => {
         </div>
 
         {/* Format Info */}
-        <div className="p-2.5 bg-[hsl(var(--muted)/0.5)] rounded-lg">
-          <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+        <div className="p-3 bg-[hsl(var(--muted)/0.4)] rounded-xl">
+          <p className="text-[12px] text-[hsl(var(--muted-foreground))] leading-relaxed">
             {exportFormat === "svg"
               ? "Export as scalable vector graphic for laser cutting or CNC."
               : "Export as 3D mesh for Gridfinity-style tool holder cutouts."}
@@ -724,29 +722,29 @@ const ExportStepPanel: React.FC = () => {
 
         {/* Export Summary */}
         <div className="space-y-1.5">
-          <label className="text-[10px] font-medium text-[hsl(var(--muted-foreground))] uppercase tracking-wide">
+          <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
             Summary
           </label>
-          <div className="p-2.5 border border-[hsl(var(--border))] rounded-lg space-y-1">
+          <div className="p-3 border border-[hsl(var(--border))] rounded-xl space-y-1.5">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
+              <span className="text-[12px] text-[hsl(var(--muted-foreground))]">
                 Tools
               </span>
-              <span className="text-xs font-medium">{toolOutlines.length}</span>
+              <span className="text-[13px] font-semibold">{toolOutlines.length}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
+              <span className="text-[12px] text-[hsl(var(--muted-foreground))]">
                 Layout Shapes
               </span>
-              <span className="text-xs font-medium">
+              <span className="text-[13px] font-semibold">
                 {layoutState.shapes.length}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
+              <span className="text-[12px] text-[hsl(var(--muted-foreground))]">
                 Format
               </span>
-              <span className="text-xs font-medium">
+              <span className="text-[13px] font-semibold">
                 {exportFormat.toUpperCase()}
               </span>
             </div>
@@ -762,11 +760,12 @@ const ExportStepPanel: React.FC = () => {
           onClick={handleExport}
           disabled={isDisabled || toolOutlines.length === 0}
           className="
-            w-full h-8 px-3 bg-[hsl(var(--success))] text-white
-            rounded text-xs font-medium hover:bg-[hsl(var(--success)/0.9)]
-            transition-colors flex items-center justify-center gap-1.5
+            w-full h-9 px-3 text-white
+            rounded-xl text-[13px] font-semibold
+            transition-all duration-200 flex items-center justify-center gap-1.5
             disabled:opacity-50 disabled:cursor-not-allowed
           "
+          style={{ background: 'linear-gradient(135deg, hsl(160, 84%, 39%), hsl(160, 84%, 50%))', boxShadow: '0 1px 3px rgba(16, 185, 129, 0.25)' }}
         >
           <Download className="w-3 h-3" />
           Export {exportFormat.toUpperCase()}
@@ -810,9 +809,9 @@ const LayoutStepPanel: React.FC = () => {
     <div className="h-full flex flex-col">
       {/* Prerequisite Warning Banner */}
       {isDisabled && (
-        <div className="mb-3 p-2.5 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.2)] rounded-lg flex items-center gap-2">
+        <div className="mb-3 p-3 bg-[hsl(var(--warning)/0.08)] border border-[hsl(var(--warning)/0.15)] rounded-xl flex items-center gap-2">
           <AlertCircle className="w-4 h-4 text-[hsl(var(--warning))] shrink-0" />
-          <p className="text-[10px] text-[hsl(var(--warning))]">
+          <p className="text-[12px] text-[hsl(var(--warning))] font-medium">
             Trace tools in step 2 first to configure layout
           </p>
         </div>
@@ -824,12 +823,12 @@ const LayoutStepPanel: React.FC = () => {
       >
         {/* Grid Settings */}
         <div className="space-y-2">
-          <label className="text-[10px] font-medium text-[hsl(var(--muted-foreground))] uppercase tracking-wide">
+          <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
             Grid Size
           </label>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
-              <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
+              <span className="text-[11px] text-[hsl(var(--muted-foreground))] font-medium">
                 Columns
               </span>
               <input
@@ -845,11 +844,11 @@ const LayoutStepPanel: React.FC = () => {
                     ),
                   })
                 }
-                className="w-full h-8 px-2 text-xs rounded border border-[hsl(var(--border))] bg-[hsl(var(--background))] focus:outline-none focus:border-[hsl(var(--primary))]"
+                className="w-full h-9 px-3 text-[13px] rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] focus:outline-none focus:border-[hsl(var(--primary))] transition-colors"
               />
             </div>
             <div className="space-y-1">
-              <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
+              <span className="text-[11px] text-[hsl(var(--muted-foreground))] font-medium">
                 Rows
               </span>
               <input
@@ -865,11 +864,11 @@ const LayoutStepPanel: React.FC = () => {
                     ),
                   })
                 }
-                className="w-full h-8 px-2 text-xs rounded border border-[hsl(var(--border))] bg-[hsl(var(--background))] focus:outline-none focus:border-[hsl(var(--primary))]"
+                className="w-full h-9 px-3 text-[13px] rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] focus:outline-none focus:border-[hsl(var(--primary))] transition-colors"
               />
             </div>
           </div>
-          <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+          <p className="text-[11px] text-[hsl(var(--muted-foreground))] font-medium">
             {grid.cols * grid.cellWidthMm} × {grid.rows * grid.cellHeightMm} mm
             total
           </p>
@@ -877,7 +876,7 @@ const LayoutStepPanel: React.FC = () => {
 
         {/* Add Simple Shapes Section */}
         <div className="space-y-2">
-          <label className="text-[10px] font-medium text-[hsl(var(--muted-foreground))] uppercase tracking-wide">
+          <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
             Add Simple Shapes
           </label>
           <div className="grid grid-cols-2 gap-1.5">
@@ -889,18 +888,17 @@ const LayoutStepPanel: React.FC = () => {
                 )
               }
               className={`
-                flex flex-col items-center justify-center gap-1 p-2.5 rounded-md transition-colors
-                ${
-                  layoutTool === "finger-notch"
-                    ? "bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.3)]"
-                    : "hover:bg-[hsl(var(--muted)/0.5)] border border-[hsl(var(--border))]"
+                flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl transition-all duration-200
+                ${layoutTool === "finger-notch"
+                  ? "bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.3)]"
+                  : "hover:bg-[hsl(var(--muted)/0.5)] border border-[hsl(var(--border))]"
                 }
               `}
             >
               <Hand
                 className={`w-4 h-4 ${layoutTool === "finger-notch" ? "text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"}`}
               />
-              <span className="text-[10px]">Finger Notch</span>
+              <span className="text-[11px] font-medium">Finger Notch</span>
             </button>
 
             {/* Circle */}
@@ -910,17 +908,16 @@ const LayoutStepPanel: React.FC = () => {
               }
               className={`
                 flex flex-col items-center justify-center gap-1 p-2.5 rounded-md transition-colors
-                ${
-                  layoutTool === "circle"
-                    ? "bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.3)]"
-                    : "hover:bg-[hsl(var(--muted)/0.5)] border border-[hsl(var(--border))]"
+                ${layoutTool === "circle"
+                  ? "bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.3)]"
+                  : "hover:bg-[hsl(var(--muted)/0.5)] border border-[hsl(var(--border))]"
                 }
               `}
             >
               <Circle
                 className={`w-4 h-4 ${layoutTool === "circle" ? "text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"}`}
               />
-              <span className="text-[10px]">Circle</span>
+              <span className="text-[11px] font-medium">Circle</span>
             </button>
 
             {/* Square */}
@@ -930,17 +927,16 @@ const LayoutStepPanel: React.FC = () => {
               }
               className={`
                 flex flex-col items-center justify-center gap-1 p-2.5 rounded-md transition-colors
-                ${
-                  layoutTool === "square"
-                    ? "bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.3)]"
-                    : "hover:bg-[hsl(var(--muted)/0.5)] border border-[hsl(var(--border))]"
+                ${layoutTool === "square"
+                  ? "bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.3)]"
+                  : "hover:bg-[hsl(var(--muted)/0.5)] border border-[hsl(var(--border))]"
                 }
               `}
             >
               <Square
                 className={`w-4 h-4 ${layoutTool === "square" ? "text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"}`}
               />
-              <span className="text-[10px]">Square</span>
+              <span className="text-[11px] font-medium">Square</span>
             </button>
 
             {/* Rectangle */}
@@ -952,17 +948,16 @@ const LayoutStepPanel: React.FC = () => {
               }
               className={`
                 flex flex-col items-center justify-center gap-1 p-2.5 rounded-md transition-colors
-                ${
-                  layoutTool === "rectangle"
-                    ? "bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.3)]"
-                    : "hover:bg-[hsl(var(--muted)/0.5)] border border-[hsl(var(--border))]"
+                ${layoutTool === "rectangle"
+                  ? "bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.3)]"
+                  : "hover:bg-[hsl(var(--muted)/0.5)] border border-[hsl(var(--border))]"
                 }
               `}
             >
               <RectangleHorizontal
                 className={`w-4 h-4 ${layoutTool === "rectangle" ? "text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"}`}
               />
-              <span className="text-[10px]">Rectangle</span>
+              <span className="text-[11px] font-medium">Rectangle</span>
             </button>
           </div>
         </div>
@@ -970,7 +965,7 @@ const LayoutStepPanel: React.FC = () => {
         {/* Layout Elements List */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
-            <label className="text-[10px] font-medium text-[hsl(var(--muted-foreground))] uppercase tracking-wide">
+            <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
               Layout Elements ({shapes.length})
             </label>
             {shapes.length > 0 && (
@@ -1004,7 +999,7 @@ const LayoutStepPanel: React.FC = () => {
                 return (
                   <div
                     key={shape.id || index}
-                    className="flex items-center gap-2 p-2 rounded-md border border-[hsl(var(--border))] hover:bg-[hsl(var(--muted)/0.3)] transition-colors"
+                    className="flex items-center gap-2 p-2.5 rounded-xl border border-[hsl(var(--border))] hover:bg-[hsl(var(--muted)/0.3)] transition-all duration-200"
                   >
                     <div className="w-4 h-4 flex items-center justify-center shrink-0">
                       {React.createElement(shapeIcon, {
@@ -1013,10 +1008,10 @@ const LayoutStepPanel: React.FC = () => {
                       })}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-medium text-[hsl(var(--foreground))] truncate">
+                      <div className="text-[13px] font-medium text-[hsl(var(--foreground))] truncate">
                         {`${shape.type || "Shape"} ${index + 1}`}
                       </div>
-                      <div className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                      <div className="text-[11px] text-[hsl(var(--muted-foreground))]">
                         {isTracedTool ? "Traced tool" : "Added shape"}
                       </div>
                     </div>
@@ -1041,9 +1036,9 @@ const LayoutStepPanel: React.FC = () => {
               })}
             </div>
           ) : (
-            <div className="p-3 border border-dashed border-[hsl(var(--border))] rounded-lg text-center">
+            <div className="p-4 border border-dashed border-[hsl(var(--border))] rounded-xl text-center">
               <Shapes className="w-5 h-5 mx-auto mb-1.5 text-[hsl(var(--muted-foreground))] opacity-50" />
-              <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+              <p className="text-[12px] text-[hsl(var(--muted-foreground))]">
                 No layout elements yet. Add shapes or initialize from traced
                 tools.
               </p>
@@ -1055,27 +1050,27 @@ const LayoutStepPanel: React.FC = () => {
       {/* Layout Summary & CTA Button - Fixed at bottom */}
       <div className="pt-3 border-t border-[hsl(var(--border))] mt-3 space-y-3">
         {/* Layout Summary */}
-        <div className="p-2.5 bg-[hsl(var(--muted)/0.3)] rounded-lg">
+        <div className="p-3 bg-[hsl(var(--muted)/0.3)] rounded-xl">
           <div className="grid grid-cols-3 gap-2 text-center">
             <div>
-              <span className="text-xs font-medium">{shapes.length}</span>
-              <p className="text-[9px] text-[hsl(var(--muted-foreground))]">
+              <span className="text-[13px] font-semibold">{shapes.length}</span>
+              <p className="text-[10px] text-[hsl(var(--muted-foreground))] font-medium">
                 Shapes
               </p>
             </div>
             <div>
-              <span className="text-xs font-medium font-tech">
+              <span className="text-[13px] font-semibold font-tech">
                 {grid.cols}×{grid.rows}
               </span>
-              <p className="text-[9px] text-[hsl(var(--muted-foreground))]">
+              <p className="text-[10px] text-[hsl(var(--muted-foreground))] font-medium">
                 Grid
               </p>
             </div>
             <div>
-              <span className="text-xs font-medium font-tech">
+              <span className="text-[13px] font-semibold font-tech">
                 {grid.cols * grid.cellWidthMm}mm
               </span>
-              <p className="text-[9px] text-[hsl(var(--muted-foreground))]">
+              <p className="text-[10px] text-[hsl(var(--muted-foreground))] font-medium">
                 Width
               </p>
             </div>
@@ -1086,11 +1081,12 @@ const LayoutStepPanel: React.FC = () => {
           onClick={() => setCurrentStep("design")}
           disabled={shapes.length === 0}
           className="
-            w-full h-8 px-3 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]
-            rounded text-xs font-medium hover:bg-[hsl(var(--primary)/0.9)]
-            transition-colors flex items-center justify-center gap-1.5
-            disabled:opacity-50 disabled:cursor-not-allowed
+            w-full h-9 px-3
+            rounded-xl text-[13px] font-semibold
+            transition-all duration-200 flex items-center justify-center gap-1.5
+            disabled:opacity-50 disabled:cursor-not-allowed text-white
           "
+          style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-btn)' }}
         >
           Continue
           <ChevronRight className="w-3 h-3" />
@@ -1126,9 +1122,9 @@ const DesignStepPanel: React.FC = () => {
     <div className="h-full flex flex-col">
       {/* Prerequisite Warning Banner */}
       {isDisabled && (
-        <div className="mb-3 p-2.5 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.2)] rounded-lg flex items-start gap-2">
+        <div className="mb-3 p-3 bg-[hsl(var(--warning)/0.08)] border border-[hsl(var(--warning)/0.15)] rounded-xl flex items-start gap-2">
           <AlertCircle className="w-4 h-4 text-[hsl(var(--warning))] shrink-0 mt-0.5" />
-          <div className="text-[10px] text-[hsl(var(--warning))]">
+          <div className="text-[12px] text-[hsl(var(--warning))] font-medium">
             {!hasTools && <p>• Trace tools in step 2</p>}
             {!hasLayout && <p>• Configure layout in step 3</p>}
           </div>
@@ -1140,17 +1136,17 @@ const DesignStepPanel: React.FC = () => {
         className={`flex-1 overflow-y-auto space-y-4 ${isDisabled ? "opacity-60 pointer-events-none" : ""}`}
       >
         {/* Info */}
-        <div className="p-2.5 bg-[hsl(var(--muted)/0.5)] rounded-lg">
+        <div className="p-3 bg-[hsl(var(--muted)/0.4)] rounded-xl">
           <div className="flex items-center justify-between">
-            <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+            <p className="text-[12px] text-[hsl(var(--muted-foreground))] leading-relaxed">
               Customize your 3D tool holder design parameters
             </p>
             <button
               onClick={resetDesignSettings}
               className="
-                px-2 py-1 text-[10px] font-medium text-[hsl(var(--muted-foreground))]
+                px-2.5 py-1.5 text-[11px] font-semibold text-[hsl(var(--muted-foreground))]
                 hover:text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted)/0.5)]
-                rounded transition-colors flex items-center gap-1
+                rounded-lg transition-all duration-200 flex items-center gap-1
               "
               title="Reset to default values"
             >
@@ -1162,7 +1158,7 @@ const DesignStepPanel: React.FC = () => {
 
         {/* Depth Settings */}
         <div className="space-y-2">
-          <label className="text-[10px] font-medium text-[hsl(var(--muted-foreground))] uppercase tracking-wide">
+          <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
             Cutout Depth
           </label>
           <div className="space-y-1.5">
@@ -1180,13 +1176,13 @@ const DesignStepPanel: React.FC = () => {
               className="w-full h-1.5 bg-[hsl(var(--muted))] rounded-lg appearance-none cursor-pointer accent-[hsl(var(--primary))]"
             />
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
+              <span className="text-[11px] text-[hsl(var(--muted-foreground))] font-medium">
                 5mm
               </span>
-              <span className="text-xs font-medium font-tech">
+              <span className="text-[13px] font-semibold font-tech">
                 {designSettings.cutoutDepth}mm
               </span>
-              <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
+              <span className="text-[11px] text-[hsl(var(--muted-foreground))] font-medium">
                 50mm
               </span>
             </div>
@@ -1291,10 +1287,10 @@ const DesignStepPanel: React.FC = () => {
         </div>
 
         {/* Gridfinity Base Toggle */}
-        <div className="flex items-center justify-between p-2.5 border border-[hsl(var(--border))] rounded-lg">
+        <div className="flex items-center justify-between p-3 border border-[hsl(var(--border))] rounded-xl">
           <div>
-            <span className="text-xs font-medium">Gridfinity Base</span>
-            <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+            <span className="text-[13px] font-semibold">Gridfinity Base</span>
+            <p className="text-[11px] text-[hsl(var(--muted-foreground))] font-medium">
               Add 42mm grid pattern
             </p>
           </div>
@@ -1306,10 +1302,9 @@ const DesignStepPanel: React.FC = () => {
             }
             className={`
               w-10 h-5 rounded-full transition-colors relative
-              ${
-                designSettings.gridfinityBase
-                  ? "bg-[hsl(var(--primary))]"
-                  : "bg-[hsl(var(--muted))]"
+              ${designSettings.gridfinityBase
+                ? "bg-[hsl(var(--primary))]"
+                : "bg-[hsl(var(--muted))]"
               }
             `}
           >
@@ -1326,19 +1321,19 @@ const DesignStepPanel: React.FC = () => {
       {/* Summary & CTA Button - Fixed at bottom */}
       <div className="pt-3 border-t border-[hsl(var(--border))] mt-3 space-y-3">
         {/* Design Summary */}
-        <div className="p-2.5 bg-[hsl(var(--muted)/0.3)] rounded-lg">
+        <div className="p-3 bg-[hsl(var(--muted)/0.3)] rounded-xl">
           <div className="grid grid-cols-2 gap-2 text-center">
             <div>
-              <span className="text-xs font-medium">{shapes.length}</span>
-              <p className="text-[9px] text-[hsl(var(--muted-foreground))]">
+              <span className="text-[13px] font-semibold">{shapes.length}</span>
+              <p className="text-[10px] text-[hsl(var(--muted-foreground))] font-medium">
                 Cutouts
               </p>
             </div>
             <div>
-              <span className="text-xs font-medium font-tech">
+              <span className="text-[13px] font-semibold font-tech">
                 {designSettings.cutoutDepth}mm
               </span>
-              <p className="text-[9px] text-[hsl(var(--muted-foreground))]">
+              <p className="text-[10px] text-[hsl(var(--muted-foreground))] font-medium">
                 Depth
               </p>
             </div>
@@ -1349,11 +1344,12 @@ const DesignStepPanel: React.FC = () => {
           onClick={() => setCurrentStep("export")}
           disabled={shapes.length === 0}
           className="
-            w-full h-8 px-3 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]
-            rounded text-xs font-medium hover:bg-[hsl(var(--primary)/0.9)]
-            transition-colors flex items-center justify-center gap-1.5
-            disabled:opacity-50 disabled:cursor-not-allowed
+            w-full h-9 px-3
+            rounded-xl text-[13px] font-semibold
+            transition-all duration-200 flex items-center justify-center gap-1.5
+            disabled:opacity-50 disabled:cursor-not-allowed text-white
           "
+          style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-btn)' }}
         >
           Continue
           <ChevronRight className="w-3 h-3" />

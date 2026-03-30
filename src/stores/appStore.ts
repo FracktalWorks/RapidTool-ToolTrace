@@ -139,8 +139,8 @@ const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/bmp'];
 
 // Default Gridfinity-style grid (42mm x 42mm cells)
 const DEFAULT_LAYOUT_GRID: LayoutGrid = {
-  rows: 3,
-  cols: 2,
+  rows: 4,
+  cols: 3,
   cellWidthMm: 42,
   cellHeightMm: 42,
 };
@@ -176,7 +176,7 @@ const initialState = {
   pixelsPerMm: null,
   toolOutlines: [],
   selectedOutlineId: null,
-  clearanceValue: 0.5,
+  clearanceValue: 0,
   activeTool: 'box' as const,
   exportFormat: 'svg' as const,
   layoutState: DEFAULT_LAYOUT_STATE,

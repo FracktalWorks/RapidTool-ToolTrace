@@ -12,7 +12,7 @@ import { useAppStore } from './stores';
 // Layout configuration for DashboardLayout
 const layoutConfig: Partial<DashboardLayoutConfig> = {
   header: {
-    height: 56, // h-14
+    height: 72, // increased from 56
     visible: true,
   },
   sidebar: {
@@ -34,13 +34,16 @@ const layoutConfig: Partial<DashboardLayoutConfig> = {
 };
 
 const footerContent = (
-      <div className="h-6 border border-red-500 flex items-center justify-between px-4 text-xs font-tech text-muted-foreground">
-        <div className="flex items-center gap-4 text-gray-600">
-          <span>Ready</span>
-          <span>•</span>
-          <span>WebGL 2.0</span>
-        </div>
-      </div>
+  <div className="h-6 border-t border-[hsl(var(--border))] flex items-center justify-between px-4 text-[11px] font-tech text-[hsl(var(--muted-foreground))]">
+    <div className="flex items-center gap-3">
+      <span className="flex items-center gap-1.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--success))]" style={{ boxShadow: '0 0 6px hsl(160, 84%, 39%)' }}></span>
+        Ready
+      </span>
+      <span className="opacity-40">•</span>
+      <span>WebGL 2.0</span>
+    </div>
+  </div>
 );
 
 // Step title mapping for properties panel
@@ -53,8 +56,8 @@ const stepTitles: Record<string, { title: string; subtitle: string }> = {
 };
 
 function App() {
-  const { 
-    isProcessing, 
+  const {
+    isProcessing,
     processingMessage,
     currentStep,
   } = useAppStore();
@@ -82,8 +85,8 @@ function App() {
         propertiesPanel={<ControlPanel />}
         propertiesPanelHeader={
           <div>
-            <span className='font-semibold text-sm'>{stepTitles[currentStep]?.title || 'Properties'}</span>
-            <p className='text-[10px] text-[hsl(var(--muted-foreground))] mt-0.5'>{stepTitles[currentStep]?.subtitle}</p>
+            <span className='font-semibold text-[14px]' style={{ letterSpacing: '-0.02em' }}>{stepTitles[currentStep]?.title || 'Properties'}</span>
+            <p className='text-[11px] text-[hsl(var(--muted-foreground))] mt-0.5 font-medium' style={{ letterSpacing: '0.01em' }}>{stepTitles[currentStep]?.subtitle}</p>
           </div>
         }
         footer={footerContent}
@@ -93,7 +96,7 @@ function App() {
           <ErrorBoundary>
             {renderWorkspace()}
           </ErrorBoundary>
-          
+
           {/* Loading Overlay - Only for main content */}
           <LoadingOverlay
             isVisible={isProcessing}
