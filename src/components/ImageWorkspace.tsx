@@ -534,6 +534,7 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     currentStep,
     activeTool,
     clearanceValue,
+    updateToolOutlineSmoothed,
   } = useAppStore();
 
   const {
@@ -570,7 +571,7 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     setIsTracing(true);
     try {
       // Use worker-based tracing (falls back to main thread if needed)
-      const result = await traceTool(imageUrl, point.x, point.y);
+      const result = await traceTool(imageUrl, point.x, point.y, paperCorners);
       if (result) {
         const outline = createToolOutline(result.points, pixelsPerMm || undefined);
         addToolOutline(outline);
@@ -580,7 +581,7 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     } finally {
       setIsTracing(false);
     }
-  }, [imageUrl, isTracing, pixelsPerMm, toolOutlines.length, addToolOutline]);
+  }, [imageUrl, isTracing, pixelsPerMm, toolOutlines.length, addToolOutline, paperCorners]);
 
   // Handle box selection for tracing
   const handleBoxSelect = useCallback(async (rect: { x: number; y: number; width: number; height: number }) => {
@@ -863,6 +864,7 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
                   onDelete={removeToolOutline}
                   onImageClick={handleTracingClick}
                   onBoxSelect={handleBoxSelect}
+                  onUpdateOutline={updateToolOutlineSmoothed}
                 />
               </div>
             )}

@@ -242,3 +242,104 @@ export const createToolOutline = (points: Point2D[], pixelsPerMm?: number): Tool
     name: `Tool ${counter}`,
   };
 };
+
+export const createPillShape = (bbox: BoundingBox): Point2D[] => {
+  const { minX, minY, maxX, maxY } = bbox;
+  const width = maxX - minX;
+  const height = maxY - minY;
+
+  const isHorizontal = width >= height;
+  const radius = isHorizontal ? height / 2 : width / 2;
+
+  if (radius <= 0) return [];
+
+  const points: Point2D[] = [];
+  const numSegments = 64; // Increased for smoother curves
+
+  if (isHorizontal) {
+    const cx1 = minX + radius;
+    const cx2 = maxX - radius;
+    const cy = minY + radius;
+
+    // Right semi-circle (from -pi/2 to pi/2)
+    for (let i = 0; i <= numSegments; i++) {
+      const angle = -Math.PI / 2 + (Math.PI * i) / numSegments;
+      points.push({ x: cx2 + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) });
+    }
+    // Left semi-circle (from pi/2 to 3pi/2)
+    for (let i = 0; i <= numSegments; i++) {
+      const angle = Math.PI / 2 + (Math.PI * i) / numSegments;
+      points.push({ x: cx1 + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) });
+    }
+  } else {
+    const cx = minX + radius;
+    const cy1 = minY + radius;
+    const cy2 = maxY - radius;
+
+    // Bottom semi-circle (from 0 to pi)
+    for (let i = 0; i <= numSegments; i++) {
+      const angle = (Math.PI * i) / numSegments;
+      points.push({ x: cx + radius * Math.cos(angle), y: cy2 + radius * Math.sin(angle) });
+    }
+    // Top semi-circle (from pi to 2pi)
+    for (let i = 0; i <= numSegments; i++) {
+      const angle = Math.PI + (Math.PI * i) / numSegments;
+      points.push({ x: cx + radius * Math.cos(angle), y: cy1 + radius * Math.sin(angle) });
+    }
+  }
+
+  return points;
+};
+
+// Create a pill shape optimally oriented to the points' principal axis
+export const createOrientedPillShape = (pts: Point2D[]): Point2D[] => {
+  if (pts.length < 3) return [...pts];
+
+  // 1. Calculate centroid
+  let cx = 0, cy = 0;
+  for (const p of pts) {
+    cx += p.x;
+    cy += p.y;
+  }
+  cx /= pts.length;
+  cy /= pts.length;
+
+  // 2. Compute covariance matrix
+  let m20 = 0, m02 = 0, m11 = 0;
+  for (const p of pts) {
+    const dx = p.x - cx;
+    const dy = p.y - cy;
+    m20 += dx * dx;
+    m02 += dy * dy;
+    m11 += dx * dy;
+  }
+
+  // 3. Find principal angle
+  const angle = 0.5 * Math.atan2(2 * m11, m20 - m02);
+
+  // 4. Rotate points to align with axes, centered at (0,0)
+  const cosA = Math.cos(-angle);
+  const sinA = Math.sin(-angle);
+  const rotatedPts = pts.map(p => {
+    const dx = p.x - cx;
+    const dy = p.y - cy;
+    return {
+      x: dx * cosA - dy * sinA,
+      y: dx * sinA + dy * cosA
+    };
+  });
+
+  // 5. Get bounding box of rotated points
+  const bbox = getBoundingBox(rotatedPts);
+
+  // 6. Create unrotated pill shape centered on the rotated bounding box
+  const pillPts = createPillShape(bbox);
+
+  // 7. Rotate pill shape back to original orientation and translate to centroid
+  const cosB = Math.cos(angle);
+  const sinB = Math.sin(angle);
+  return pillPts.map(p => ({
+    x: cx + (p.x * cosB - p.y * sinB),
+    y: cy + (p.x * sinB + p.y * cosB)
+  }));
+};

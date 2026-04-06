@@ -18,6 +18,7 @@ import {
   Loader2,
   RefreshCw,
   MousePointerClick,
+  MousePointer2,
   SquareDashed,
   Hand,
   Circle,
@@ -410,17 +411,81 @@ const ToolsStepPanel: React.FC = () => {
     selectedOutlineId,
     selectOutline,
     removeToolOutline,
+    addToolOutline,
+    setToolOutlines,
     paperDetected,
     setCurrentStep,
     clearanceValue,
     setClearanceValue,
     activeTool,
     setActiveTool,
+    imageUrl,
+    pixelsPerMm,
+    paperCorners,
+    snapToPill,
   } = useAppStore();
+
+  const [isAutoDetecting, setIsAutoDetecting] = useState(false);
+  const [autoDetectDone, setAutoDetectDone] = useState(false);
+  const [autoDetectCount, setAutoDetectCount] = useState(0);
 
   // Show UI even when paper not detected, just disable interactions
   // const isDisabled = !paperDetected;
   const isDisabled = false;
+
+  // Auto-detect all tools function
+  const runAutoDetect = useCallback(async () => {
+    if (!imageUrl || isAutoDetecting) return;
+    
+    setIsAutoDetecting(true);
+    try {
+      const { traceAllTools } = await import('../workers');
+      const { smoothContour, getBoundingBox } = await import('../lib/geometry');
+      
+      const results = await traceAllTools(imageUrl, paperCorners);
+      
+      if (results && results.length > 0) {
+        const TOOL_COLORS = [
+          '#3b82f6', '#ef4444', '#22c55e', '#f59e0b',
+          '#8b5cf6', '#ec4899', '#06b6d4', '#f97316',
+        ];
+        
+        const newOutlines = results.map((result, index) => {
+          const smoothed = smoothContour(result.points);
+          const bbox = getBoundingBox(result.points);
+          return {
+            id: `tool-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`,
+            points: result.points,
+            smoothedPoints: smoothed,
+            boundingBox: bbox,
+            area: result.area,
+            areaInMm2: pixelsPerMm ? result.area / (pixelsPerMm * pixelsPerMm) : undefined,
+            color: TOOL_COLORS[index % TOOL_COLORS.length],
+            name: `Tool ${index + 1}`,
+          };
+        });
+        
+        setToolOutlines(newOutlines);
+        setAutoDetectCount(results.length);
+      }
+      setAutoDetectDone(true);
+    } catch (error) {
+      console.error('Auto-detect failed:', error);
+      setAutoDetectDone(true);
+    } finally {
+      setIsAutoDetecting(false);
+    }
+  }, [imageUrl, isAutoDetecting, pixelsPerMm, setToolOutlines, paperCorners]);
+
+  const autoDetectRef = useRef<string | null>(null);
+
+  // Auto-run detection when step is first entered
+  useEffect(() => {
+    if (imageUrl && !autoDetectDone && toolOutlines.length === 0 && autoDetectRef.current !== imageUrl) {
+      autoDetectRef.current = imageUrl;
+      runAutoDetect();
+    }
+  }, [imageUrl, autoDetectDone, toolOutlines.length, runAutoDetect]);
 
   return (
     <div className="h-full flex flex-col">
@@ -438,12 +503,56 @@ const ToolsStepPanel: React.FC = () => {
       <div
         className={`flex-1 overflow-y-auto space-y-3 ${isDisabled ? "opacity-60 pointer-events-none" : ""}`}
       >
+        {/* Auto Detect Banner */}
+        {isAutoDetecting && (
+          <div className="flex items-center gap-2 p-2.5 bg-[hsl(var(--primary)/0.05)] border border-[hsl(var(--primary)/0.1)] rounded-lg">
+            <Loader2 className="w-3.5 h-3.5 text-[hsl(var(--primary))] animate-spin" />
+            <span className="text-xs text-[hsl(var(--primary))]">
+              Auto-detecting tools...
+            </span>
+          </div>
+        )}
+        
+        {autoDetectDone && autoDetectCount > 0 && !isAutoDetecting && (
+          <div className="flex items-center gap-2 p-2.5 bg-[hsl(var(--success)/0.08)] border border-[hsl(var(--success)/0.15)] rounded-lg">
+            <Sparkles className="w-3.5 h-3.5 text-[hsl(var(--success))]" />
+            <span className="text-xs text-[hsl(var(--success))]">
+              {autoDetectCount} tool{autoDetectCount !== 1 ? 's' : ''} auto-detected
+            </span>
+          </div>
+        )}
+
+        {/* Auto Detect Button */}
+        <button
+          onClick={runAutoDetect}
+          disabled={isAutoDetecting || isDisabled}
+          className="
+            w-full h-9 px-3 bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]
+            border border-[hsl(var(--primary)/0.2)]
+            rounded-lg text-xs font-medium hover:bg-[hsl(var(--primary)/0.15)]
+            transition-colors flex items-center justify-center gap-1.5
+            disabled:opacity-50 disabled:cursor-not-allowed
+          "
+        >
+          {isAutoDetecting ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Detecting...
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-3.5 h-3.5" />
+              Auto Detect All Tools
+            </>
+          )}
+        </button>
+
         {/* Tracing Mode Selection */}
         <div className="space-y-1.5">
           <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
             Tracing Mode
           </label>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <button
               onClick={() => setActiveTool("box")}
               disabled={isDisabled}
@@ -482,6 +591,26 @@ const ToolsStepPanel: React.FC = () => {
                 Auto-detect on click
               </div>
             </button>
+            <button
+              onClick={() => setActiveTool("edit")}
+              disabled={isDisabled}
+              className={`
+                p-2.5 rounded-lg border transition-all text-left
+                ${
+                  activeTool === "edit"
+                    ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.08)]"
+                    : "border-[hsl(var(--border))] hover:border-[hsl(var(--primary)/0.5)] hover:bg-[hsl(var(--muted)/0.5)]"
+                }
+              `}
+            >
+              <MousePointer2
+                className={`w-4 h-4 mb-1.5 ${activeTool === "edit" ? "text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"}`}
+              />
+              <div className="text-xs font-medium">Edit Pts</div>
+              <div className="text-[10px] text-[hsl(var(--muted-foreground))] mt-0.5">
+                Adjust points
+              </div>
+            </button>
           </div>
         </div>
 
@@ -490,7 +619,8 @@ const ToolsStepPanel: React.FC = () => {
           <p className="text-[12px] text-[hsl(var(--muted-foreground))] leading-relaxed">
             {activeTool === "box"
               ? "Draw a rectangle around the tool to trace it"
-              : "Click directly on a tool to auto-detect its outline"}
+              : activeTool === "trace"
+              ? "Click directly on a tool to auto-detect its outline" : "Select a listed tool, then drag its points below to precisely align its curves"}
           </p>
         </div>
 
@@ -530,9 +660,20 @@ const ToolsStepPanel: React.FC = () => {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
+                      snapToPill(outline.id);
+                    }}
+                    className="p-1 hover:bg-[hsl(var(--primary)/0.1)] rounded transition-colors shrink-0 mr-1"
+                    title="Snap to geometric shape (Pill)"
+                  >
+                    <Sparkles className="w-3 h-3 text-[hsl(var(--primary))]" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
                       removeToolOutline(outline.id);
                     }}
                     className="p-1 hover:bg-[hsl(var(--destructive)/0.1)] rounded transition-colors shrink-0"
+                    title="Remove"
                   >
                     <Trash2 className="w-3 h-3 text-[hsl(var(--destructive))]" />
                   </button>
@@ -609,6 +750,7 @@ const ExportStepPanel: React.FC = () => {
     pixelsPerMm,
     clearanceValue,
     layoutState,
+    designSettings,
   } = useAppStore();
 
   // Check prerequisites
@@ -643,11 +785,36 @@ const ExportStepPanel: React.FC = () => {
       if (exportFormat === "svg") {
         downloadSVG(outlinesToExport, pixelsPerMm, "tooltrace-export.svg");
       } else {
-        await downloadSTL(
-          outlinesToExport,
-          pixelsPerMm,
-          "tooltrace-export.stl",
-        );
+        const { generateExportMesh } = await import("./ExportWorkspace");
+        const { STLExporter } = await import("three-stdlib");
+        const THREE = await import("three");
+
+        const mesh = generateExportMesh(layoutState, toolOutlines, pixelsPerMm, designSettings);
+        
+        const exporter = new STLExporter();
+        const scene = new THREE.Scene();
+        scene.add(mesh);
+        
+        const stlData = exporter.parse(scene, { binary: true });
+        
+        const arrayBuffer = new ArrayBuffer(stlData.byteLength);
+        new Uint8Array(arrayBuffer).set(new Uint8Array(stlData.buffer, stlData.byteOffset, stlData.byteLength));
+        
+        const blob = new Blob([arrayBuffer], { type: 'application/sla' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'tooltrace-export.stl';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        
+        // Clean up
+        mesh.geometry.dispose();
+        if (mesh.material instanceof THREE.Material) {
+          mesh.material.dispose();
+        }
       }
     } catch (error) {
       console.error("Export failed:", error);

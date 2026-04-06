@@ -25,7 +25,7 @@
 interface Point2D { x: number; y: number }
 interface PaperCorners { topLeft: Point2D; topRight: Point2D; bottomRight: Point2D; bottomLeft: Point2D }
 
-interface WorkerMessage { id: string; type: 'init' | 'detectPaper' | 'traceTool' | 'traceRegion'; payload: any }
+interface WorkerMessage { id: string; type: 'init' | 'detectPaper' | 'traceTool' | 'traceRegion' | 'traceAllTools'; payload: any }
 interface WorkerResponse { id: string; type: 'success' | 'error'; payload: any }
 
 // Constants
@@ -196,7 +196,13 @@ function detectPaper(imageData: ImageData) {
 
   deleteMats(src, gray);
 
-  if (!best) {
+  // Pick the best candidate
+  const best = candidates.reduce<{ points: Point2D[]; confidence: number } | null>((best, c) => {
+    if (!best || c.confidence > best.confidence) return c;
+    return best;
+  }, null);
+
+  if (!best || best.confidence < 0.2) {
     return { detected: false, confidence: 0, corners: null, pixelsPerMm: null, message: 'No paper detected' };
   }
 
@@ -220,7 +226,7 @@ function detectPaper(imageData: ImageData) {
   };
 }
 
-// Detect white paper using HSV color segmentation
+// Detect white paper using HSV color segmentation (widened thresholds)
 function detectWhitePaper(src: any, totalArea: number): { points: Point2D[]; confidence: number } | null {
   const rgb = new cv.Mat();
   cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
@@ -284,6 +290,10 @@ function detectPaperByEdges(gray: any, totalArea: number): { points: Point2D[]; 
   const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
   cv.dilate(edges, edges, kernel);
   cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, kernel);
+  
+  // Additional dilation to connect nearby edges  
+  const dilateKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+  cv.dilate(edges, edges, dilateKernel);
 
   const result = findBestQuadrilateral(edges, totalArea);
 
@@ -293,13 +303,16 @@ function detectPaperByEdges(gray: any, totalArea: number): { points: Point2D[]; 
   return result;
 }
 
-// Find best quadrilateral with quality scoring
+// Find best quadrilateral with quality scoring and multi-epsilon approach
 function findBestQuadrilateral(binary: any, totalArea: number): { points: Point2D[]; confidence: number } | null {
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
   cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
   let best: { points: Point2D[]; confidence: number } | null = null;
+
+  // Try multiple epsilon values for polygon approximation
+  const epsilons = [0.02, 0.04, 0.06, 0.08, 0.1, 0.12];
 
   for (let i = 0; i < contours.size(); i++) {
     const contour = contours.get(i);
@@ -634,7 +647,8 @@ function findMainObjectInRegion(roi: any, offsetX: number, offsetY: number): { p
   return result;
 }
 
-// Extract contour points with tight approximation for precision
+// Extract contour points directly without aggressive approximation
+// We let the frontend geometry library handle exact precision RDP simplification
 function extractContourPoints(
   contour: any,
   offsetX: number,
@@ -662,6 +676,110 @@ function extractContourPoints(
 }
 
 // ============================================================================
+// Auto-detect ALL tools on paper
+// ============================================================================
+
+function traceAllTools(imageData: ImageData): { points: Point2D[]; area: number }[] {
+  console.log('traceAllTools: finding all tools on paper...');
+  const src = cv.matFromImageData(imageData);
+  
+  // Use the paper silhouette strategy to find all non-white objects
+  const gray = new cv.Mat();
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  
+  // Illumination normalization (shadow removal)
+  const lighting = new cv.Mat();
+  cv.GaussianBlur(gray, lighting, new cv.Size(51, 51), 0);
+  
+  const grayFloat = new cv.Mat();
+  const lightingFloat = new cv.Mat();
+  gray.convertTo(grayFloat, cv.CV_32F);
+  lighting.convertTo(lightingFloat, cv.CV_32F);
+  
+  const eps = new cv.Mat(lightingFloat.rows, lightingFloat.cols, cv.CV_32F, new cv.Scalar(1.0));
+  cv.add(lightingFloat, eps, lightingFloat);
+  
+  const normalized = new cv.Mat();
+  cv.divide(grayFloat, lightingFloat, normalized, 255.0);
+  
+  const normalizedU8 = new cv.Mat();
+  normalized.convertTo(normalizedU8, cv.CV_8U);
+  
+  // Threshold to find non-white regions (tools)
+  const toolMask = new cv.Mat();
+  cv.threshold(normalizedU8, toolMask, 200, 255, cv.THRESH_BINARY_INV);
+  
+  // Morphological cleanup
+  const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
+  cv.morphologyEx(toolMask, toolMask, cv.MORPH_CLOSE, kernel);
+  cv.morphologyEx(toolMask, toolMask, cv.MORPH_OPEN, kernel);
+  
+  // Merge nearby regions
+  const largeKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(15, 15));
+  cv.morphologyEx(toolMask, toolMask, cv.MORPH_CLOSE, largeKernel);
+  
+  // Find all external contours
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
+  cv.findContours(toolMask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  
+  const totalArea = src.rows * src.cols;
+  const results: { points: Point2D[]; area: number }[] = [];
+  
+  for (let i = 0; i < contours.size(); i++) {
+    const contour = contours.get(i);
+    const area = cv.contourArea(contour);
+    
+    // Filter: minimum area 1000px², max 60% of image (not paper itself)
+    if (area < 1000 || area > totalArea * 0.6) continue;
+    
+    // Quality filter: solidity > 0.3 (not just noise)
+    const solidity = calculateSolidity(contour);
+    if (solidity < 0.3) continue;
+    
+    const result = extractContourPoints(contour, 0, 0, area);
+    results.push(result);
+    console.log(`Found tool: ${result.points.length} points, area=${area}, solidity=${solidity.toFixed(2)}`);
+  }
+  
+  // Also try Otsu fallback if no tools found
+  if (results.length === 0) {
+    console.log('traceAllTools: silhouette found nothing, trying Otsu...');
+    
+    const binary = new cv.Mat();
+    cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+    
+    const kernel2 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
+    cv.morphologyEx(binary, binary, cv.MORPH_CLOSE, kernel2);
+    cv.morphologyEx(binary, binary, cv.MORPH_OPEN, kernel2);
+    
+    const contours2 = new cv.MatVector();
+    const hierarchy2 = new cv.Mat();
+    cv.findContours(binary, contours2, hierarchy2, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    
+    for (let i = 0; i < contours2.size(); i++) {
+      const contour = contours2.get(i);
+      const area = cv.contourArea(contour);
+      if (area < 1000 || area > totalArea * 0.6) continue;
+      
+      const solidity = calculateSolidity(contour);
+      if (solidity < 0.3) continue;
+      
+      results.push(extractContourPoints(contour, 0, 0, area));
+    }
+    
+    deleteMats(binary, kernel2, contours2, hierarchy2);
+  }
+  
+  // Cleanup
+  deleteMats(gray, lighting, grayFloat, lightingFloat, eps, normalized, normalizedU8, toolMask, kernel, largeKernel, contours, hierarchy);
+  src.delete();
+  
+  console.log(`traceAllTools: found ${results.length} tools`);
+  return results;
+}
+
+// ============================================================================
 // Message Handler
 // ============================================================================
 
@@ -685,6 +803,9 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
       case 'traceRegion':
         result = traceRegion(payload.imageData, payload.rect);
         break;
+      case 'traceAllTools':
+        result = traceAllTools(payload.imageData);
+        break;
       default:
         throw new Error(`Unknown message type: ${type}`);
     }
@@ -698,3 +819,4 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
     } as WorkerResponse);
   }
 };
+
