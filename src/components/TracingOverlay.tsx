@@ -37,6 +37,7 @@ interface TracingOverlayProps {
   onDelete: (id: string) => void;
   onImageClick: (point: Point2D) => void;
   onBoxSelect?: (rect: { x: number; y: number; width: number; height: number }) => void;
+  onUpdateOutline?: (id: string, points: Point2D[]) => void;
 }
 
 // ============================================================================
@@ -56,10 +57,14 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
   onDelete,
   onImageClick,
   onBoxSelect,
+  onUpdateOutline,
 }) => {
   // State for box selection
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
+  
+  // State for point editing
+  const [dragPoint, setDragPoint] = useState<{ id: string; index: number } | null>(null);
 
   // Get image coordinates from mouse event
   const getImageCoords = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
@@ -84,16 +89,38 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
     }
   }, [currentTool, isTracing, getImageCoords]);
 
-  // Handle mouse move for box selection
+  // Handle point mouse down
+  const handlePointMouseDown = useCallback((e: React.MouseEvent, id: string, index: number) => {
+    if (currentTool !== 'edit') return;
+    e.stopPropagation();
+    setDragPoint({ id, index });
+  }, [currentTool]);
+
+  // Handle mouse move for box selection or dragging
   const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    if (dragPoint && currentTool === 'edit' && onUpdateOutline) {
+      const { x, y } = getImageCoords(e);
+      const outline = outlines.find(o => o.id === dragPoint.id);
+      if (outline) {
+        const newPoints = [...outline.smoothedPoints];
+        newPoints[dragPoint.index] = { x, y };
+        onUpdateOutline(outline.id, newPoints);
+      }
+      return;
+    }
+
     if (!isDrawing || currentTool !== 'box' || !selectionRect) return;
-    
     const { x, y } = getImageCoords(e);
     setSelectionRect(prev => prev ? { ...prev, endX: x, endY: y } : null);
-  }, [isDrawing, currentTool, selectionRect, getImageCoords]);
+  }, [isDrawing, currentTool, selectionRect, getImageCoords, dragPoint, onUpdateOutline, outlines]);
 
-  // Handle mouse up for box selection
+  // Handle mouse up for box selection or dragging
   const handleMouseUp = useCallback((_e: React.MouseEvent<SVGSVGElement>) => {
+    if (dragPoint) {
+      setDragPoint(null);
+      return;
+    }
+
     if (currentTool === 'box' && isDrawing && selectionRect && onBoxSelect) {
       const x = Math.min(selectionRect.startX, selectionRect.endX);
       const y = Math.min(selectionRect.startY, selectionRect.endY);
@@ -107,7 +134,7 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
     }
     setIsDrawing(false);
     setSelectionRect(null);
-  }, [currentTool, isDrawing, selectionRect, onBoxSelect]);
+  }, [currentTool, isDrawing, selectionRect, onBoxSelect, dragPoint]);
 
   // Handle click on SVG background (for click-to-trace)
   const handleBackgroundClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
@@ -251,6 +278,21 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
                     fill="white"
                     stroke={outline.color}
                     strokeWidth={strokeWidth}
+                  />
+                ))}
+                
+                {/* Custom Edit Points rendering */}
+                {currentTool === 'edit' && outline.smoothedPoints.map((point, i) => (
+                  <circle
+                    key={`point-${i}`}
+                    cx={point.x}
+                    cy={point.y}
+                    r={Math.max(3, 6 / zoom)}
+                    fill="white"
+                    stroke={outline.color}
+                    strokeWidth={strokeWidth}
+                    className="cursor-pointer hover:fill-current fill-white"
+                    onMouseDown={(e) => handlePointMouseDown(e, outline.id, i)}
                   />
                 ))}
                 

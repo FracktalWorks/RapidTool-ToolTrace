@@ -87,9 +87,9 @@ export async function detectPaper(imageUrl: string): Promise<PaperDetectionResul
   return request('detectPaper', { imageData });
 }
 
-export async function traceTool(imageUrl: string, x: number, y: number): Promise<ToolTracingResult | null> {
+export async function traceTool(imageUrl: string, x: number, y: number, paperCorners?: PaperCorners | null): Promise<ToolTracingResult | null> {
   const imageData = await getImageData(imageUrl);
-  return request('traceTool', { imageData, x, y });
+  return request('traceTool', { imageData, x, y, paperCorners });
 }
 
 export async function traceRegion(
@@ -98,4 +98,9 @@ export async function traceRegion(
 ): Promise<ToolTracingResult | null> {
   const imageData = await getImageData(imageUrl);
   return request('traceRegion', { imageData, rect });
+}
+
+export async function traceAllTools(imageUrl: string, paperCorners?: PaperCorners | null): Promise<ToolTracingResult[]> {
+  const imageData = await getImageData(imageUrl);
+  return request('traceAllTools', { imageData, paperCorners });
 }

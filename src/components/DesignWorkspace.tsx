@@ -12,6 +12,7 @@ import { Canvas, useThree } from '@react-three/fiber';
 import type { ThreeElements } from '@react-three/fiber';
 import { OrbitControls, GizmoHelper, GizmoViewport, Grid, Environment } from '@react-three/drei';
 import * as THREE from 'three';
+import { Brush, Evaluator, SUBTRACTION } from 'three-bvh-csg';
 import { useAppStore, type LayoutShape, type DesignSettings } from '../stores';
 import { RotateCcw, Box } from 'lucide-react';
 
@@ -34,18 +35,14 @@ export type { DesignSettings } from '../stores';
 // Utility Functions
 // ============================================================================
 
-/**
- * Create a hole path for a shape (used to punch holes in base)
- * NOTE: Holes must be drawn COUNTER-CLOCKWISE for proper Three.js rendering
- */
-function createShapeHolePath(
+function createSolidShape(
   shape: LayoutShape,
   layoutWidth: number,
   layoutHeight: number,
   toolOutlines: ReturnType<typeof useAppStore.getState>['toolOutlines'],
   pixelsPerMm: number | null
-): THREE.Path | null {
-  const hole = new THREE.Path();
+): THREE.Shape | null {
+  const solid = new THREE.Shape();
 
   // Convert from layout coords (top-left origin) to centered coords
   const centerX = shape.x + shape.width / 2 - layoutWidth / 2;
@@ -69,8 +66,7 @@ function createShapeHolePath(
 
     if (points.length < 3) return null;
 
-    // Check winding order and reverse if clockwise (we need counter-clockwise for holes)
-    // Calculate signed area to determine winding
+    // We want COUNTER-CLOCKWISE for solid shapes in Three.js
     let signedArea = 0;
     for (let i = 0; i < points.length; i++) {
       const j = (i + 1) % points.length;
@@ -78,56 +74,56 @@ function createShapeHolePath(
       signedArea -= points[j].x * points[i].y;
     }
 
-    // If signedArea > 0, it's counter-clockwise (correct for holes)
-    // If signedArea < 0, it's clockwise (need to reverse)
-    const orderedPoints = signedArea < 0 ? points : [...points].reverse();
+    // signedArea > 0 means CCW
+    const orderedPoints = signedArea > 0 ? points : [...points].reverse();
 
-    hole.moveTo(orderedPoints[0].x, orderedPoints[0].y);
+    solid.moveTo(orderedPoints[0].x, orderedPoints[0].y);
     for (let i = 1; i < orderedPoints.length; i++) {
-      hole.lineTo(orderedPoints[i].x, orderedPoints[i].y);
+      solid.lineTo(orderedPoints[i].x, orderedPoints[i].y);
     }
-    hole.closePath();
+    solid.closePath();
   } else {
     const halfW = shape.width / 2;
     const halfH = shape.height / 2;
 
     switch (shape.type) {
       case 'circle': {
-        // Draw circle COUNTER-CLOCKWISE (clockwise = true parameter for absellipse)
+        // Draw CCW 
         const segments = 32;
-        for (let i = segments; i >= 0; i--) {
+        for (let i = 0; i <= segments; i++) {
           const angle = (i / segments) * Math.PI * 2;
           const x = centerX + Math.cos(angle) * halfW;
           const y = centerY + Math.sin(angle) * halfH;
-          if (i === segments) hole.moveTo(x, y);
-          else hole.lineTo(x, y);
+          if (i === 0) solid.moveTo(x, y);
+          else solid.lineTo(x, y);
         }
         break;
       }
       case 'finger-notch': {
-        // Pill shape - drawn counter-clockwise
+        // CCW
         const radius = Math.min(halfW, halfH);
-        hole.moveTo(centerX - halfW + radius, centerY - halfH);
-        hole.absarc(centerX - halfW + radius, centerY, halfH, -Math.PI / 2, Math.PI / 2, false);
-        hole.lineTo(centerX + halfW - radius, centerY + halfH);
-        hole.absarc(centerX + halfW - radius, centerY, halfH, Math.PI / 2, -Math.PI / 2, false);
-        hole.closePath();
+        solid.moveTo(centerX - halfW + radius, centerY - halfH);
+        solid.lineTo(centerX + halfW - radius, centerY - halfH);
+        solid.absarc(centerX + halfW - radius, centerY, halfH, -Math.PI / 2, Math.PI / 2, false);
+        solid.lineTo(centerX - halfW + radius, centerY + halfH);
+        solid.absarc(centerX - halfW + radius, centerY, halfH, Math.PI / 2, -Math.PI / 2, false);
+        solid.closePath();
         break;
       }
       case 'square':
       case 'rectangle':
       default:
-        // Draw rectangle COUNTER-CLOCKWISE
-        hole.moveTo(centerX - halfW, centerY - halfH);
-        hole.lineTo(centerX - halfW, centerY + halfH);
-        hole.lineTo(centerX + halfW, centerY + halfH);
-        hole.lineTo(centerX + halfW, centerY - halfH);
-        hole.closePath();
+        // CCW
+        solid.moveTo(centerX - halfW, centerY - halfH);
+        solid.lineTo(centerX + halfW, centerY - halfH);
+        solid.lineTo(centerX + halfW, centerY + halfH);
+        solid.lineTo(centerX - halfW, centerY + halfH);
+        solid.closePath();
         break;
     }
   }
 
-  return hole;
+  return solid;
 }
 
 /**
@@ -223,7 +219,7 @@ function createPocketFloorWithCutouts(
   shapes: LayoutShape[],
   toolOutlines: ReturnType<typeof useAppStore.getState>['toolOutlines'],
   pixelsPerMm: number | null
-): THREE.ExtrudeGeometry {
+): THREE.BufferGeometry {
   const t = wallThickness;
   const r = Math.max(chamfer - t * 0.5, 0.5);
 
@@ -231,7 +227,7 @@ function createPocketFloorWithCutouts(
   const innerW = width / 2 - t;
   const innerH = height / 2 - t;
 
-  // Create inner floor shape
+  // Create solid inner floor shape
   const floorShape = new THREE.Shape();
   floorShape.moveTo(-innerW + r, -innerH);
   floorShape.lineTo(innerW - r, -innerH);
@@ -243,18 +239,43 @@ function createPocketFloorWithCutouts(
   floorShape.lineTo(-innerW, -innerH + r);
   floorShape.quadraticCurveTo(-innerW, -innerH, -innerW + r, -innerH);
 
-  // Punch holes for each shape (these go through the raised floor)
-  shapes.forEach((shape) => {
-    const holePath = createShapeHolePath(shape, width, height, toolOutlines, pixelsPerMm);
-    if (holePath) {
-      floorShape.holes.push(holePath);
-    }
-  });
-
-  return new THREE.ExtrudeGeometry(floorShape, {
+  const floorGeometry = new THREE.ExtrudeGeometry(floorShape, {
     depth: floorThickness,
     bevelEnabled: false,
   });
+
+  if (shapes.length === 0) {
+    return floorGeometry;
+  }
+
+  // Use three-bvh-csg for accurate geometric boolean operations
+  const evaluator = new Evaluator();
+  evaluator.useGroups = false;
+
+  let resultBrush = new Brush(floorGeometry);
+  resultBrush.updateMatrixWorld();
+
+  shapes.forEach((shape) => {
+    const cutoutShape = createSolidShape(shape, width, height, toolOutlines, pixelsPerMm);
+    if (!cutoutShape) return;
+
+    const cutoutGeometry = new THREE.ExtrudeGeometry(cutoutShape, {
+      depth: floorThickness + 2, // Slightly thicker to prevent Z-fighting artifacts
+      bevelEnabled: false,
+    });
+    
+    cutoutGeometry.translate(0, 0, -1); // Move down slightly
+    
+    // Add chamfer manually if necessary or simplify mesh
+    const cutoutBrush = new Brush(cutoutGeometry);
+    cutoutBrush.updateMatrixWorld();
+
+    resultBrush = evaluator.evaluate(resultBrush, cutoutBrush, SUBTRACTION);
+
+    cutoutGeometry.dispose();
+  });
+
+  return resultBrush.geometry;
 }
 
 /**

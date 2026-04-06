@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import type { Point2D, PaperCorners, BoundingBox, ToolOutline } from '../lib/geometry';
+import { createOrientedPillShape, polygonArea, getBoundingBox } from '../lib/geometry';
 
 // Re-export types
 export type { Point2D, PaperCorners, BoundingBox, ToolOutline };
@@ -87,10 +88,13 @@ export interface AppState {
   // Tool Outlines
   toolOutlines: ToolOutline[];
   selectedOutlineId: string | null;
+  setToolOutlines: (outlines: ToolOutline[]) => void;
   addToolOutline: (outline: ToolOutline) => void;
   updateToolOutline: (id: string, points: Point2D[]) => void;
+  updateToolOutlineSmoothed: (id: string, smoothedPoints: Point2D[]) => void;
   removeToolOutline: (id: string) => void;
   selectOutline: (id: string | null) => void;
+  snapToPill: (id: string) => void;
   
   // Clearance/Offset
   clearanceValue: number;
@@ -283,6 +287,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   
   setPixelsPerMm: (ppm) => set({ pixelsPerMm: ppm }),
   
+  setToolOutlines: (outlines) => set({
+    toolOutlines: outlines,
+    selectedOutlineId: outlines.length > 0 ? outlines[0].id : null,
+  }),
+  
   addToolOutline: (outline) => set((state) => ({
     toolOutlines: [...state.toolOutlines, outline],
     selectedOutlineId: outline.id,
@@ -293,6 +302,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       o.id === id ? { ...o, points } : o
     ),
   })),
+
+  updateToolOutlineSmoothed: (id, smoothedPoints) => set((state) => {
+    const outline = state.toolOutlines.find(o => o.id === id);
+    if (!outline) return state;
+    
+    const boundingBox = getBoundingBox(smoothedPoints);
+    const area = polygonArea(smoothedPoints);
+    const areaInMm2 = state.pixelsPerMm ? area / (state.pixelsPerMm * state.pixelsPerMm) : undefined;
+    
+    return {
+      toolOutlines: state.toolOutlines.map((o) =>
+        o.id === id ? { ...o, smoothedPoints, boundingBox, area, areaInMm2 } : o
+      ),
+    };
+  }),
   
   removeToolOutline: (id) => set((state) => ({
     toolOutlines: state.toolOutlines.filter((o) => o.id !== id),
@@ -300,6 +324,33 @@ export const useAppStore = create<AppState>((set, get) => ({
   })),
   
   selectOutline: (id) => set({ selectedOutlineId: id }),
+
+  snapToPill: (id) => set((state) => {
+    const outline = state.toolOutlines.find(o => o.id === id);
+    if (!outline) return state;
+
+    const pillPoints = createOrientedPillShape(outline.smoothedPoints);
+    if (!pillPoints.length) return state;
+
+    const area = polygonArea(pillPoints);
+    const newBoundingBox = getBoundingBox(pillPoints);
+    const areaInMm2 = state.pixelsPerMm ? area / (state.pixelsPerMm * state.pixelsPerMm) : undefined;
+    
+    return {
+      toolOutlines: state.toolOutlines.map(o => 
+        o.id === id 
+          ? { 
+              ...o, 
+              points: pillPoints, 
+              smoothedPoints: pillPoints, 
+              boundingBox: newBoundingBox, 
+              area, 
+              areaInMm2 
+            } 
+          : o
+      )
+    };
+  }),
   
   setClearanceValue: (value) => set({ clearanceValue: value }),
   

@@ -18,7 +18,7 @@ import { useAppStore } from '../stores';
 import type { Point2D } from '../stores';
 import { DraggableCorners } from './DraggableCorners';
 import { TracingOverlay } from './TracingOverlay';
-import { calculatePixelsPerMm } from '../lib/geometry';
+import { calculatePixelsPerMm, smoothContour } from '../lib/geometry';
 import { traceTool, traceRegion } from '../workers';
 
 // ============================================================================
@@ -532,6 +532,7 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     currentStep,
     activeTool,
     clearanceValue,
+    updateToolOutlineSmoothed,
   } = useAppStore();
 
   const {
@@ -568,13 +569,14 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     setIsTracing(true);
     try {
       // Use worker-based tracing (falls back to main thread if needed)
-      const result = await traceTool(imageUrl, point.x, point.y);
+      const result = await traceTool(imageUrl, point.x, point.y, paperCorners);
       if (result) {
-        // Create tool outline object
+        // Create tool outline object with properly smoothed curves
+        const smoothed = smoothContour(result.points);
         const outline = {
           id: `tool-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           points: result.points,
-          smoothedPoints: result.points,
+          smoothedPoints: smoothed,
           boundingBox: calculateBoundingBox(result.points),
           area: result.area,
           areaInMm2: pixelsPerMm ? result.area / (pixelsPerMm * pixelsPerMm) : undefined,
@@ -588,7 +590,7 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     } finally {
       setIsTracing(false);
     }
-  }, [imageUrl, isTracing, pixelsPerMm, toolOutlines.length, addToolOutline]);
+  }, [imageUrl, isTracing, pixelsPerMm, toolOutlines.length, addToolOutline, paperCorners]);
 
   // Handle box selection for tracing
   const handleBoxSelect = useCallback(async (rect: { x: number; y: number; width: number; height: number }) => {
@@ -598,10 +600,12 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     try {
       const result = await traceRegion(imageUrl, rect);
       if (result) {
+        // Create tool outline object with properly smoothed curves
+        const smoothed = smoothContour(result.points);
         const outline = {
           id: `tool-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           points: result.points,
-          smoothedPoints: result.points,
+          smoothedPoints: smoothed,
           boundingBox: calculateBoundingBox(result.points),
           area: result.area,
           areaInMm2: pixelsPerMm ? result.area / (pixelsPerMm * pixelsPerMm) : undefined,
@@ -880,6 +884,7 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
                   onDelete={removeToolOutline}
                   onImageClick={handleTracingClick}
                   onBoxSelect={handleBoxSelect}
+                  onUpdateOutline={updateToolOutlineSmoothed}
                 />
               </div>
             )}
