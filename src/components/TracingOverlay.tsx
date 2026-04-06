@@ -216,7 +216,7 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
         
         // Calculate offset path for clearance (using round joins for smooth result)
         const offsetPath = clearancePixels > 0
-          ? contourToSVGPath(offsetPolygon(outline.smoothedPoints, clearancePixels, { joinType: 'round' }), true)
+          ? contourToSVGPath(offsetPolygon(outline.smoothedPoints, clearancePixels), true)
           : null;
 
         return (
