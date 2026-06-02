@@ -461,13 +461,13 @@ function traceByPaperSilhouette(src: any, x: number, y: number): { points: Point
   // Values below ~200 are likely tools (not white paper)
   cv.threshold(normalizedU8, toolMask, 200, 255, cv.THRESH_BINARY_INV);
 
-  // Clean up with morphological operations
-  const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
+  // Clean up with morphological operations (reduced kernel sizes for better accuracy)
+  const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
   cv.morphologyEx(toolMask, toolMask, cv.MORPH_CLOSE, kernel);
   cv.morphologyEx(toolMask, toolMask, cv.MORPH_OPEN, kernel);
 
-  // Additional closing to merge nearby regions into single silhouette
-  const largeKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(15, 15));
+  // Additional closing to merge nearby regions into single silhouette (reduced size)
+  const largeKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
   cv.morphologyEx(toolMask, toolMask, cv.MORPH_CLOSE, largeKernel);
 
   // Find EXTERNAL contours only for clean outer boundary
@@ -527,7 +527,7 @@ function traceByOtsuFallback(src: any, x: number, y: number): { points: Point2D[
   const binary = new cv.Mat();
   cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
 
-  const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
+  const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
   cv.morphologyEx(binary, binary, cv.MORPH_CLOSE, kernel);
   cv.morphologyEx(binary, binary, cv.MORPH_OPEN, kernel);
 
@@ -605,8 +605,8 @@ function findMainObjectInRegion(roi: any, offsetX: number, offsetY: number): { p
   const binary = new cv.Mat();
   cv.threshold(blurred, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
 
-  // Morphological repair
-  const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+  // Morphological repair (reduced kernel size for accuracy)
+  const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
   cv.morphologyEx(binary, binary, cv.MORPH_CLOSE, kernel);
   cv.morphologyEx(binary, binary, cv.MORPH_OPEN, kernel);
 
@@ -653,8 +653,8 @@ function extractContourPoints(
 ): { points: Point2D[]; area: number } {
   const peri = cv.arcLength(contour, true);
 
-  // Tighter epsilon for tool precision (smaller = more detail)
-  const epsilon = 0.002 * peri;
+  // Tighter epsilon for highly accurate tool precision
+  const epsilon = 0.0005 * peri;
 
   const approx = new cv.Mat();
   cv.approxPolyDP(contour, approx, epsilon, true);
@@ -726,13 +726,13 @@ function traceAllTools(imageData: ImageData, paperCorners?: PaperCorners): { poi
     deleteMats(boundaryMask, ptsVec, ptsMat);
   }
 
-  // Morphological cleanup
-  const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
+  // Morphological cleanup (reduced kernels for high accuracy)
+  const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
   cv.morphologyEx(toolMask, toolMask, cv.MORPH_CLOSE, kernel);
   cv.morphologyEx(toolMask, toolMask, cv.MORPH_OPEN, kernel);
 
   // Merge nearby regions
-  const largeKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(15, 15));
+  const largeKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
   cv.morphologyEx(toolMask, toolMask, cv.MORPH_CLOSE, largeKernel);
 
   // Find all external contours
@@ -766,7 +766,7 @@ function traceAllTools(imageData: ImageData, paperCorners?: PaperCorners): { poi
     const binary = new cv.Mat();
     cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
 
-    const kernel2 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(7, 7));
+    const kernel2 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
     cv.morphologyEx(binary, binary, cv.MORPH_CLOSE, kernel2);
     cv.morphologyEx(binary, binary, cv.MORPH_OPEN, kernel2);
 

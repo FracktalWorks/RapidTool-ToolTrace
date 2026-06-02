@@ -125,100 +125,81 @@ export const calculatePixelsPerMm = (corners: PaperCorners): number => {
 };
 
 /**
- * Generates an SVG path using cubic Bezier curves for maximum smoothness
+ * Generates an SVG path using straight lines for exact geometric accuracy.
+ * Since the input points are already smoothed and dense, straight lines 
+ * prevent the wobble and overshooting caused by cubic beziers.
  */
 export const contourToSVGPath = (pts: Point2D[], closed = true): string => {
   if (pts.length < 2) return '';
 
-  // If we have enough points, use smooth curve logic
-  if (pts.length < 3) {
-    let d = `M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)}`;
-    for (let i = 1; i < pts.length; i++) d += ` L ${pts[i].x.toFixed(2)} ${pts[i].y.toFixed(2)}`;
-    return closed ? d + ' Z' : d;
-  }
-
-  // Use cubic Beziers for ultra-smooth rendering
   let path = `M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)}`;
-  const n = pts.length;
-
-  for (let i = 0; i < (closed ? n : n - 1); i++) {
-    const p0 = pts[(i - 1 + n) % n];
-    const p1 = pts[i];
-    const p2 = pts[(i + 1) % n];
-    const p3 = pts[(i + 2) % n];
-
-    // Control points for a smooth Catmull-Rom like curve in Bezier form
-    const cp1x = p1.x + (p2.x - p0.x) / 6;
-    const cp1y = p1.y + (p2.y - p0.y) / 6;
-    const cp2x = p2.x - (p3.x - p1.x) / 6;
-    const cp2y = p2.y - (p3.y - p1.y) / 6;
-
-    path += ` C ${cp1x.toFixed(2)},${cp1y.toFixed(2)} ${cp2x.toFixed(2)},${cp2y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)}`;
+  for (let i = 1; i < pts.length; i++) {
+    path += ` L ${pts[i].x.toFixed(2)} ${pts[i].y.toFixed(2)}`;
   }
 
   return closed ? path + ' Z' : path;
 };
 
-/**
- * Robust polygon offsetting with corner handling
- */
 export const offsetPolygon = (
   pts: Point2D[],
   offset: number
 ): Point2D[] => {
   if (pts.length < 3 || offset === 0) return [...pts];
 
-  // 1. Aggressively simplify raw points to remove noise/jitter
-  const sourceEpsilon = Math.max(0.5, Math.abs(offset) * 0.05);
-  const simplified = simplifyPath(pts, sourceEpsilon);
-  const n = simplified.length;
-  const result: Point2D[] = [];
+  try {
+    const ClipperLib = require('clipper-lib');
+    const scale = 1000;
+    
+    // Convert to ClipperLib format
+    let path = pts.map(p => new ClipperLib.IntPoint(Math.round(p.x * scale), Math.round(p.y * scale)));
+    
+    // 1. Clean and Simplify the polygon first!
+    // OpenCV traces often have microscopic self-intersections (noise loops).
+    // If not simplified, ClipperOffset will silently fail and "flatten" or skew the shape 
+    // (which caused the bottom of the wrench to stop expanding).
+    path = ClipperLib.Clipper.CleanPolygon(path, 0.1 * scale);
+    const cleanPaths = ClipperLib.Clipper.SimplifyPolygon(
+      path, 
+      ClipperLib.PolyFillType.pftNonZero
+    );
+    
+    if (!cleanPaths || cleanPaths.length === 0) return [...pts];
 
-  for (let i = 0; i < n; i++) {
-    const pPrev = simplified[(i - 1 + n) % n];
-    const pCurr = simplified[i];
-    const pNext = simplified[(i + 1) % n];
-
-    // Edge vectors
-    const v1 = { x: pCurr.x - pPrev.x, y: pCurr.y - pPrev.y };
-    const v2 = { x: pNext.x - pCurr.x, y: pNext.y - pCurr.y };
-
-    const mag1 = Math.hypot(v1.x, v1.y) || 1;
-    const mag2 = Math.hypot(v2.x, v2.y) || 1;
-
-    // Normal vectors
-    const n1 = { x: -v1.y / mag1, y: v1.x / mag1 };
-    const n2 = { x: -v2.y / mag2, y: v2.x / mag2 };
-
-    // Calculate cross product to determine angle
-    const cross = v1.x * v2.y - v1.y * v2.x;
-    const dot = n1.x * n2.x + n1.y * n2.y;
-
-    // Straight line or inside corner depends on the sign of offset vs cross product
-    // For simplicity, we interpolate corners, but only for meaningful turns
-    if (Math.abs(dot) > 0.99) {
-      // Very close to straight, just one point
-      result.push({ x: pCurr.x + n1.x * offset, y: pCurr.y + n1.y * offset });
-    } else {
-      // Rounded corner: use fewer steps for smaller offsets
-      const steps = offset > 10 ? 4 : 2;
-      for (let s = 0; s <= steps; s++) {
-        const t = s / steps;
-        const nx = n1.x * (1 - t) + n2.x * t;
-        const ny = n1.y * (1 - t) + n2.y * t;
-        const nMag = Math.hypot(nx, ny) || 1;
-        result.push({
-          x: pCurr.x + (nx / nMag) * offset,
-          y: pCurr.y + (ny / nMag) * offset
-        });
+    // 2. Perform the offset
+    const co = new ClipperLib.ClipperOffset();
+    
+    // jtRound guarantees perfect, uniform distance (equal gap) in ALL directions without spikes.
+    for (const p of cleanPaths) {
+      co.AddPath(p, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+    }
+    
+    const solution = new ClipperLib.Paths();
+    co.Execute(solution, offset * scale);
+    
+    if (!solution || solution.length === 0) return [...pts];
+    
+    // 3. Find the largest outer boundary
+    let outerPath = solution[0];
+    let maxArea = 0;
+    for (const p of solution) {
+      const area = Math.abs(ClipperLib.Clipper.Area(p));
+      if (area > maxArea) {
+        maxArea = area;
+        outerPath = p;
       }
     }
+    
+    // 4. Return points directly. 
+    // contourToSVGPath now uses straight lines, so these dense points will render 
+    // as a flawlessly smooth curve without any Catmull-Rom wobbles.
+    return outerPath.map((p: any) => ({
+      x: p.X / scale,
+      y: p.Y / scale
+    }));
+  } catch (err) {
+    console.error("Clipper offset failed:", err);
+    return [...pts];
   }
-
-  // 2. Final simplification pass for clean CAD look
-  // then a buttery smooth Chaikin pass
-  const cleanResult = simplifyPath(result, 1.2);
-  return chaikinSmoothing(cleanResult, 3, true);
 };
 
 // Create tool outline from traced points
@@ -227,7 +208,8 @@ const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#3b82f6'
 
 export const createToolOutline = (points: Point2D[], pixelsPerMm?: number): ToolOutline => {
   const area = polygonArea(points);
-  const processed = smoothContour(points, 2.5, 4);
+  // Reduced smoothing epsilon from 2.5 to 0.5 and iterations from 4 to 2 for highly accurate shape preservation
+  const processed = smoothContour(points, 0.5, 2);
 
 
   return {
