@@ -33,13 +33,7 @@ export const Header: React.FC<HeaderProps> = ({ className }) => {
             <h1 className="font-brand text-xl tracking-tight text-[hsl(var(--foreground))]">
               ToolTrace
             </h1>
-            <span className="text-[9px] font-medium text-[hsl(var(--muted-foreground))] bg-[hsl(var(--muted))] px-1.5 py-0.5 rounded">
-              BETA
-            </span>
           </div>
-          <p className="text-[10px] text-[hsl(var(--muted-foreground))] -mt-0.5">
-            By Fracktal Works
-          </p>
         </div>
       </div>
 
