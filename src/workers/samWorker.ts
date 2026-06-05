@@ -151,6 +151,65 @@ function thumb64(mask: Uint8Array, W: number, H: number): { t: Uint8Array; area:
   return { t, area };
 }
 
+// Flood-fill to fill internal holes in a 64x64 binary thumbnail
+function fillHoles64(thumb: Uint8Array): Uint8Array {
+  const filled = new Uint8Array(thumb);
+  const visited = new Uint8Array(64 * 64);
+  const queue: number[] = [];
+
+  // Add all border pixels that are 0 to the queue
+  for (let x = 0; x < 64; x++) {
+    // Top border
+    if (filled[x] === 0) { queue.push(x); visited[x] = 1; }
+    // Bottom border
+    const botIdx = 63 * 64 + x;
+    if (filled[botIdx] === 0) { queue.push(botIdx); visited[botIdx] = 1; }
+  }
+  for (let y = 1; y < 63; y++) {
+    // Left border
+    const leftIdx = y * 64;
+    if (filled[leftIdx] === 0) { queue.push(leftIdx); visited[leftIdx] = 1; }
+    // Right border
+    const rightIdx = y * 64 + 63;
+    if (filled[rightIdx] === 0) { queue.push(rightIdx); visited[rightIdx] = 1; }
+  }
+
+  // Flood-fill BFS to find all background pixels connected to the boundary
+  let head = 0;
+  while (head < queue.length) {
+    const idx = queue[head++];
+    const x = idx % 64;
+    const y = (idx / 64) | 0;
+
+    const neighbors = [
+      { nx: x - 1, ny: y },
+      { nx: x + 1, ny: y },
+      { nx: x, ny: y - 1 },
+      { nx: x, ny: y + 1 }
+    ];
+
+    for (const { nx, ny } of neighbors) {
+      if (nx >= 0 && nx < 64 && ny >= 0 && ny < 64) {
+        const nIdx = ny * 64 + nx;
+        if (filled[nIdx] === 0 && visited[nIdx] === 0) {
+          visited[nIdx] = 1;
+          queue.push(nIdx);
+        }
+      }
+    }
+  }
+
+  // Any pixel not connected to the border (visited is 0) and initially 0 is an internal hole.
+  // Fill it (set to 1).
+  for (let i = 0; i < 4096; i++) {
+    if (filled[i] === 0 && visited[i] === 0) {
+      filled[i] = 1;
+    }
+  }
+
+  return filled;
+}
+
 // Autonomous: decode every prompt, filter to tool-like masks, then drop
 // duplicates / sub-parts via containment-aware NMS. Returns survivor masks
 // (largest first) at processing resolution + the scale back to original.
@@ -163,7 +222,16 @@ async function autoSegment(id: string, url: string, points: { x: number; y: numb
   const minArea = procArea * 0.0008;
   const maxArea = procArea * 0.5;
 
-  type Cand = { data: Uint8Array; W: number; H: number; score: number; area: number; thumb: Uint8Array; thumbArea: number };
+  type Cand = {
+    data: Uint8Array;
+    W: number;
+    H: number;
+    score: number;
+    area: number;
+    thumb: Uint8Array;
+    thumbArea: number;
+    filledThumb?: Uint8Array;
+  };
   const cands: Cand[] = [];
 
   for (let i = 0; i < points.length; i++) {
@@ -177,17 +245,21 @@ async function autoSegment(id: string, url: string, points: { x: number; y: numb
     cands.push({ data: r.data, W: r.width, H: r.height, score: r.score, area, thumb: th.t, thumbArea: th.area });
   }
 
-  // Containment-aware NMS: keep largest; drop anything mostly inside a kept mask.
+  // Containment-aware NMS: keep largest; drop anything mostly inside a kept mask's filled contour.
   cands.sort((a, b) => b.area - a.area);
   const kept: Cand[] = [];
   for (const c of cands) {
     let covered = false;
     for (const k of kept) {
       let inter = 0;
-      for (let p = 0; p < 4096; p++) if (c.thumb[p] && k.thumb[p]) inter++;
+      const kt = k.filledThumb || k.thumb;
+      for (let p = 0; p < 4096; p++) if (c.thumb[p] && kt[p]) inter++;
       if (c.thumbArea > 0 && inter / c.thumbArea > 0.6) { covered = true; break; }
     }
-    if (!covered) kept.push(c);
+    if (!covered) {
+      c.filledThumb = fillHoles64(c.thumb);
+      kept.push(c);
+    }
   }
 
   const masks = kept.map((k) => ({ mask: k.data.buffer as ArrayBuffer, width: k.W, height: k.H, score: k.score }));

@@ -968,39 +968,55 @@ function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): Prop
   const dk = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(15, 15));
   cv.dilate(coverage, coverage, dk);
 
-  // Local texture (variance) map — high on metal, ~0 on smooth paper.
   const gray = new cv.Mat();
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  const gf = new cv.Mat(); gray.convertTo(gf, cv.CV_32F);
-  const ks = new cv.Size(11, 11);
-  const mean = new cv.Mat(); cv.boxFilter(gf, mean, cv.CV_32F, ks);
-  const sq = new cv.Mat(); cv.multiply(gf, gf, sq);
-  const meanSq = new cv.Mat(); cv.boxFilter(sq, meanSq, cv.CV_32F, ks);
-  const m2 = new cv.Mat(); cv.multiply(mean, mean, m2);
-  const varMap = new cv.Mat(); cv.subtract(meanSq, m2, varMap);
 
+  // Bilateral filtering to preserve edges while removing paper texture/noise
+  const blurred = new cv.Mat();
+  cv.bilateralFilter(gray, blurred, 9, 75, 75);
+
+  // Auto-tuned Canny edge detection
+  const edges = autoTunedCanny(blurred);
+
+  // Restrict edges to paper interior
   const interior = paperCorners ? paperInteriorMask(paperCorners, rows, cols) : null;
-  const cov = coverage.data as Uint8Array;
-  const intr = interior ? (interior.data as Uint8Array) : null;
-  const vmd = varMap.data32F as Float32Array;
-  const VAR_T = 60; // std ≈ 7.7 — comfortably above smooth-paper noise
+  if (interior) {
+    cv.bitwise_and(edges, interior, edges);
+  }
+
+  // Subtract coverage (areas already covered by classical detection)
+  const notCoverage = new cv.Mat();
+  cv.bitwise_not(coverage, notCoverage);
+  cv.bitwise_and(edges, notCoverage, edges);
+
+  // Connect isolated edges of chrome tools into solid components using dilation and closing
+  const dilateKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(9, 9));
+  cv.dilate(edges, edges, dilateKernel);
+  const closeKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(15, 15));
+  cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, closeKernel);
+
+  // Find contours of the remaining uncovered edge blobs (chrome tools)
+  const edgeContours = new cv.MatVector();
+  const edgeHierarchy = new cv.Mat();
+  cv.findContours(edges, edgeContours, edgeHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
   const grid: Point2D[] = [];
-  const step = Math.max(40, Math.round(Math.min(rows, cols) / 14));
-  for (let y = step; y < rows; y += step) {
-    for (let x = step; x < cols; x += step) {
-      const idx = y * cols + x;
-      if (intr && intr[idx] === 0) continue;     // off paper
-      if (cov[idx] !== 0) continue;              // already covered by classical
-      if (vmd[idx] < VAR_T) continue;            // smooth blank paper → skip
-      grid.push({ x, y });
+  for (let i = 0; i < edgeContours.size(); i++) {
+    const c = edgeContours.get(i);
+    const area = cv.contourArea(c);
+    // Ignore small noise, only prompt on components with meaningful shape area
+    if (area < 400) continue;
+    const m = cv.moments(c);
+    if (m.m00 > 0) {
+      grid.push({ x: m.m10 / m.m00, y: m.m01 / m.m00 });
     }
   }
 
-  deleteMats(src, mask, contours, hierarchy, coverage, dk, gray, gf, mean, sq, meanSq, m2, varMap);
+  // Cleanup
+  deleteMats(src, mask, contours, hierarchy, coverage, dk, gray, blurred, edges, notCoverage, dilateKernel, closeKernel, edgeContours, edgeHierarchy);
   if (interior) interior.delete();
 
-  console.log(`proposeRegions: ${blobs.length} blobs, ${grid.length} grid prompts`);
+  console.log(`proposeRegions: ${blobs.length} blobs, ${grid.length} edge-guided prompts`);
   return { blobs, grid };
 }
 
@@ -1014,10 +1030,11 @@ function contourFromMask(mask: Uint8Array, width: number, height: number): Trace
   const m = new cv.Mat(height, width, cv.CV_8UC1);
   m.data.set(mask);
 
-  // Light cleanup (SAM masks are already clean; this removes stray speckle).
-  const k = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
-  cv.morphologyEx(m, m, cv.MORPH_OPEN, k);
-  cv.morphologyEx(m, m, cv.MORPH_CLOSE, k);
+  // Close narrow gaps/slits with a 5x5 kernel, then open to remove speckle
+  const kClose = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+  const kOpen = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
+  cv.morphologyEx(m, m, cv.MORPH_CLOSE, kClose);
+  cv.morphologyEx(m, m, cv.MORPH_OPEN, kOpen);
 
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
@@ -1033,11 +1050,33 @@ function contourFromMask(mask: Uint8Array, width: number, height: number): Trace
 
   let result: TraceResult | null = null;
   if (best && bestArea > 50) {
-    const confidence = contourConfidence(best);
-    result = extractContourPoints(best, 0, 0, bestArea, confidence);
+    // Create a solid version of the largest contour to fill all internal holes/loops
+    const mClean = cv.Mat.zeros(height, width, cv.CV_8U);
+    const tempVec = new cv.MatVector();
+    tempVec.push_back(best);
+    cv.drawContours(mClean, tempVec, 0, new cv.Scalar(255), -1);
+
+    // Extract the clean outer contour of the solid shape
+    const cleanContours = new cv.MatVector();
+    const cleanHierarchy = new cv.Mat();
+    cv.findContours(mClean, cleanContours, cleanHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
+
+    if (cleanContours.size() > 0) {
+      let cleanBest = cleanContours.get(0);
+      let cleanBestArea = cv.contourArea(cleanBest);
+      for (let i = 1; i < cleanContours.size(); i++) {
+        const c = cleanContours.get(i);
+        const a = cv.contourArea(c);
+        if (a > cleanBestArea) { cleanBestArea = a; cleanBest = c; }
+      }
+      const confidence = contourConfidence(cleanBest);
+      result = extractContourPoints(cleanBest, 0, 0, cleanBestArea, confidence);
+    }
+
+    deleteMats(mClean, tempVec, cleanContours, cleanHierarchy);
   }
 
-  deleteMats(m, k, contours, hierarchy);
+  deleteMats(m, kClose, kOpen, contours, hierarchy);
   return result;
 }
 
