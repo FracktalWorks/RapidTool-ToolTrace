@@ -280,9 +280,8 @@ async function autoSegment(id: string, url: string, points: { x: number; y: numb
       for (let p = 0; p < 4096; p++) {
         if (cA.thumb[p] && cB.thumb[p]) inter++;
       }
-      const minThumbArea = Math.min(cA.thumbArea, cB.thumbArea);
-      // If the intersection is > 15% of the smaller area, they belong to the same tool
-      if (minThumbArea > 0 && inter / minThumbArea > 0.15) {
+      // If the intersection is non-zero in the 64x64 thumbnail, they touch/overlap and belong to the same tool
+      if (inter > 0) {
         union(i, j);
       }
     }
