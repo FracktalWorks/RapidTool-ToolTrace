@@ -136,29 +136,25 @@ const LayoutGridOverlay: React.FC<LayoutGridOverlayProps> = ({
   
   return (
     <g className="layout-grid">
-      {/* Main background - light gray like tooltrace */}
+      {/* Main background */}
       <rect
         x={0}
         y={0}
         width={totalWidth}
         height={totalHeight}
-        fill="#e5e5e5"
-        stroke="none"
+        style={{ fill: 'hsl(var(--muted))', stroke: 'none' }}
       />
-      
+
       {/* Dashed border */}
       <rect
         x={0}
         y={0}
         width={totalWidth}
         height={totalHeight}
-        fill="none"
-        stroke="#888"
-        strokeWidth={1}
-        strokeDasharray="6 3"
+        style={{ fill: 'none', stroke: 'hsl(var(--border))', strokeWidth: 1, strokeDasharray: '6 3' }}
       />
-      
-      {/* Grid cell lines - subtle */}
+
+      {/* Grid cell lines */}
       {Array.from({ length: gridCols - 1 }).map((_, i) => (
         <line
           key={`v-${i}`}
@@ -166,9 +162,7 @@ const LayoutGridOverlay: React.FC<LayoutGridOverlayProps> = ({
           y1={0}
           x2={(i + 1) * cellWidthMm}
           y2={totalHeight}
-          stroke="#ccc"
-          strokeWidth={0.5}
-          strokeDasharray="4 4"
+          style={{ stroke: 'hsl(var(--border))', strokeWidth: 0.5, strokeDasharray: '4 4' }}
         />
       ))}
       {Array.from({ length: gridRows - 1 }).map((_, i) => (
@@ -178,53 +172,19 @@ const LayoutGridOverlay: React.FC<LayoutGridOverlayProps> = ({
           y1={(i + 1) * cellHeightMm}
           x2={totalWidth}
           y2={(i + 1) * cellHeightMm}
-          stroke="#ccc"
-          strokeWidth={0.5}
-          strokeDasharray="4 4"
+          style={{ stroke: 'hsl(var(--border))', strokeWidth: 0.5, strokeDasharray: '4 4' }}
         />
       ))}
-      
-      {/* Edge resize handles - small rectangles at midpoints */}
-      {/* Top center */}
-      <rect 
-        x={totalWidth / 2 - 6} 
-        y={-4} 
-        width={12} 
-        height={8} 
-        rx={2} 
-        fill="#666"
-        className="cursor-ns-resize"
-      />
-      {/* Bottom center */}
-      <rect 
-        x={totalWidth / 2 - 6} 
-        y={totalHeight - 4} 
-        width={12} 
-        height={8} 
-        rx={2} 
-        fill="#666"
-        className="cursor-ns-resize"
-      />
-      {/* Left center */}
-      <rect 
-        x={-4} 
-        y={totalHeight / 2 - 6} 
-        width={8} 
-        height={12} 
-        rx={2} 
-        fill="#666"
-        className="cursor-ew-resize"
-      />
-      {/* Right center */}
-      <rect 
-        x={totalWidth - 4} 
-        y={totalHeight / 2 - 6} 
-        width={8} 
-        height={12} 
-        rx={2} 
-        fill="#666"
-        className="cursor-ew-resize"
-      />
+
+      {/* Edge resize handles */}
+      <rect x={totalWidth / 2 - 6} y={-4} width={12} height={8} rx={2}
+        style={{ fill: 'hsl(var(--muted-foreground))' }} className="cursor-ns-resize" />
+      <rect x={totalWidth / 2 - 6} y={totalHeight - 4} width={12} height={8} rx={2}
+        style={{ fill: 'hsl(var(--muted-foreground))' }} className="cursor-ns-resize" />
+      <rect x={-4} y={totalHeight / 2 - 6} width={8} height={12} rx={2}
+        style={{ fill: 'hsl(var(--muted-foreground))' }} className="cursor-ew-resize" />
+      <rect x={totalWidth - 4} y={totalHeight / 2 - 6} width={8} height={12} rx={2}
+        style={{ fill: 'hsl(var(--muted-foreground))' }} className="cursor-ew-resize" />
     </g>
   );
 };
@@ -259,13 +219,15 @@ const ShapeOverlay: React.FC<ShapeOverlayProps> = ({
   
   return (
     <g className="shape-overlay">
-      {/* Shape fill - white with dark border like tooltrace */}
       <path
         d={pathData}
-        fill="white"
-        stroke={isSelected ? 'hsl(198, 89%, 50%)' : '#333'}
-        strokeWidth={isSelected ? 2 / zoom : 1.5 / zoom}
-        style={{ cursor: isToolLocked ? 'default' : 'move', pointerEvents: isToolLocked ? 'none' : 'auto' }}
+        style={{
+          fill: 'hsl(var(--card))',
+          stroke: isSelected ? 'hsl(var(--primary))' : 'hsl(var(--foreground) / 0.6)',
+          strokeWidth: isSelected ? 2 / zoom : 1.5 / zoom,
+          cursor: isToolLocked ? 'default' : 'move',
+          pointerEvents: isToolLocked ? 'none' : 'auto',
+        }}
         onClick={(e) => {
           e.stopPropagation();
           if (!isToolLocked) onSelect();
@@ -284,10 +246,12 @@ const ShapeOverlay: React.FC<ShapeOverlayProps> = ({
             y={shape.y}
             width={shape.width}
             height={shape.height}
-            fill="none"
-            stroke="hsl(198, 89%, 50%)"
-            strokeWidth={1 / zoom}
-            strokeDasharray={`${4 / zoom} ${2 / zoom}`}
+            style={{
+              fill: 'none',
+              stroke: 'hsl(var(--primary))',
+              strokeWidth: 1 / zoom,
+              strokeDasharray: `${4 / zoom} ${2 / zoom}`,
+            }}
             pointerEvents="none"
           />
         </g>

@@ -10,7 +10,6 @@ import {
   Image as ImageIcon,
   Wrench,
   Download,
-  Upload,
   Trash2,
   Check,
   AlertCircle,
@@ -20,12 +19,12 @@ import {
   MousePointerClick,
   MousePointer2,
   SquareDashed,
+  Paintbrush,
   Hand,
   Circle,
   Square,
   RectangleHorizontal,
   Shapes,
-  X,
   Lightbulb,
   Camera,
   FileText,
@@ -36,7 +35,6 @@ import {
 import { useAppStore } from "../stores";
 import { detectPaper } from "../workers";
 import { downloadSVG } from "../lib/exportSVG";
-import { downloadSTL } from "../lib/exportSTL";
 import { offsetPolygon } from "../lib/geometry";
 
 // ============================================================================
@@ -50,7 +48,6 @@ const PaperStepPanel: React.FC = () => {
     setImage,
     clearImage,
     paperDetected,
-    paperConfidence,
     pixelsPerMm,
     imageUrl,
     setCurrentStep,
@@ -71,21 +68,6 @@ const PaperStepPanel: React.FC = () => {
     },
     [setImage],
   );
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      const file = e.dataTransfer.files[0];
-      if (file && file.type.startsWith("image/")) {
-        setImage(file);
-      }
-    },
-    [setImage],
-  );
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-  }, []);
 
   const runAutoDetect = useCallback(async () => {
     if (!imageUrl) return;
@@ -432,9 +414,7 @@ const ToolsStepPanel: React.FC = () => {
     selectedOutlineId,
     selectOutline,
     removeToolOutline,
-    addToolOutline,
     setToolOutlines,
-    paperDetected,
     setCurrentStep,
     clearanceValue,
     setClearanceValue,
@@ -444,11 +424,15 @@ const ToolsStepPanel: React.FC = () => {
     pixelsPerMm,
     paperCorners,
     snapToPill,
+    refineBrush,
+    setRefineBrush,
   } = useAppStore();
 
   const [isAutoDetecting, setIsAutoDetecting] = useState(false);
   const [autoDetectDone, setAutoDetectDone] = useState(false);
   const [autoDetectCount, setAutoDetectCount] = useState(0);
+  const [isAiDetecting, setIsAiDetecting] = useState(false);
+  const [aiProgress, setAiProgress] = useState<number | null>(null);
 
   // Show UI even when paper not detected, just disable interactions
   // const isDisabled = !paperDetected;
@@ -475,7 +459,7 @@ const ToolsStepPanel: React.FC = () => {
           const smoothed = smoothContour(result.points);
           const bbox = getBoundingBox(result.points);
           return {
-            id: `tool-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`,
+            id: `tool-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 9)}`,
             points: result.points,
             smoothedPoints: smoothed,
             boundingBox: bbox,
@@ -483,6 +467,7 @@ const ToolsStepPanel: React.FC = () => {
             areaInMm2: pixelsPerMm ? result.area / (pixelsPerMm * pixelsPerMm) : undefined,
             color: TOOL_COLORS[index % TOOL_COLORS.length],
             name: `Tool ${index + 1}`,
+            confidence: result.confidence,
           };
         });
 
@@ -498,9 +483,49 @@ const ToolsStepPanel: React.FC = () => {
     }
   }, [imageUrl, isAutoDetecting, pixelsPerMm, setToolOutlines, paperCorners]);
 
+  // Autonomous AI detection (SlimSAM): classical proposes prompts → SAM
+  // segments each precisely (incl. chrome). Lazy-downloads the model once.
+  const runAiDetect = useCallback(async () => {
+    if (!imageUrl || isAiDetecting) return;
+    setIsAiDetecting(true);
+    setAiProgress(0);
+    try {
+      const { samAutoSegment } = await import('../workers');
+      const { smoothContour, getBoundingBox } = await import('../lib/geometry');
+
+      const results = await samAutoSegment(imageUrl, paperCorners, (p) => setAiProgress(Math.round(p.progress)));
+
+      if (results && results.length > 0) {
+        const TOOL_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
+        const newOutlines = results.map((result, index) => {
+          const smoothed = smoothContour(result.points, 0.5, 2);
+          return {
+            id: `ai-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 9)}`,
+            points: result.points,
+            smoothedPoints: smoothed,
+            boundingBox: getBoundingBox(smoothed),
+            area: result.area,
+            areaInMm2: pixelsPerMm ? result.area / (pixelsPerMm * pixelsPerMm) : undefined,
+            color: TOOL_COLORS[index % TOOL_COLORS.length],
+            name: `Tool ${index + 1}`,
+            confidence: result.confidence,
+          };
+        });
+        setToolOutlines(newOutlines);
+        setAutoDetectCount(results.length);
+        setAutoDetectDone(true);
+      }
+    } catch (error) {
+      console.error('AI detect failed:', error);
+    } finally {
+      setIsAiDetecting(false);
+      setAiProgress(null);
+    }
+  }, [imageUrl, isAiDetecting, pixelsPerMm, setToolOutlines, paperCorners]);
+
   const autoDetectRef = useRef<string | null>(null);
 
-  // Auto-run detection when step is first entered
+  // Auto-run (classical) detection when step is first entered
   useEffect(() => {
     if (imageUrl && !autoDetectDone && toolOutlines.length === 0 && autoDetectRef.current !== imageUrl) {
       autoDetectRef.current = imageUrl;
@@ -568,6 +593,32 @@ const ToolsStepPanel: React.FC = () => {
           )}
         </button>
 
+        {/* Detect All — AI (autonomous SlimSAM, incl. chrome) */}
+        <button
+          onClick={runAiDetect}
+          disabled={isAiDetecting || isAutoDetecting || isDisabled}
+          className="
+            w-full h-9 px-3 text-white
+            rounded-lg text-xs font-semibold transition-all
+            flex items-center justify-center gap-1.5
+            disabled:opacity-50 disabled:cursor-not-allowed
+          "
+          style={{ background: 'var(--gradient-brand)', boxShadow: 'var(--shadow-btn)' }}
+          title="Autonomous AI detection — precise on chrome too. Downloads a small model on first use (cached)."
+        >
+          {isAiDetecting ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              {aiProgress !== null ? `AI working… ${aiProgress}%` : 'Loading AI…'}
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-3.5 h-3.5" />
+              Detect All — AI
+            </>
+          )}
+        </button>
+
         {/* Tracing Mode Selection */}
         <div className="space-y-1.5">
           <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
@@ -607,9 +658,9 @@ const ToolsStepPanel: React.FC = () => {
               <MousePointerClick
                 className={`w-4 h-4 mb-1.5 ${activeTool === "trace" ? "text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"}`}
               />
-              <div className="text-[13px] font-medium">Click Trace</div>
+              <div className="text-[13px] font-medium">AI Trace</div>
               <div className="text-[11px] text-[hsl(var(--muted-foreground))] mt-0.5">
-                Auto-detect on click
+                Click a tool — SAM segments it
               </div>
             </button>
             <button
@@ -632,17 +683,65 @@ const ToolsStepPanel: React.FC = () => {
               </div>
             </button>
           </div>
+
+          {/* Refine (GrabCut) — full-width, highlights the precision tool */}
+          <button
+            onClick={() => setActiveTool(activeTool === "refine" ? "box" : "refine")}
+            disabled={isDisabled}
+            className={`
+              w-full flex items-center gap-2.5 p-3 rounded-xl border transition-all duration-200 text-left
+              ${activeTool === "refine"
+                ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.08)]"
+                : "border-[hsl(var(--border))] hover:border-[hsl(var(--primary)/0.5)] hover:bg-[hsl(var(--muted)/0.5)]"
+              }
+            `}
+          >
+            <Paintbrush className={`w-4 h-4 shrink-0 ${activeTool === "refine" ? "text-[hsl(var(--primary))]" : "text-[hsl(var(--muted-foreground))]"}`} />
+            <div className="flex-1">
+              <div className="text-[13px] font-medium">Refine Edges</div>
+              <div className="text-[11px] text-[hsl(var(--muted-foreground))] mt-0.5">
+                Brush to correct a box-traced tool (great for metal)
+              </div>
+            </div>
+          </button>
         </div>
 
-        {/* Mode Info */}
-        <div className="p-3 bg-[hsl(var(--muted)/0.4)] rounded-xl">
-          <p className="text-[12px] text-[hsl(var(--muted-foreground))] leading-relaxed">
-            {activeTool === "box"
-              ? "Draw a rectangle around the tool to trace it"
-              : activeTool === "trace"
-                ? "Click directly on a tool to auto-detect its outline" : "Select a listed tool, then drag its points below to precisely align its curves"}
-          </p>
-        </div>
+        {/* Mode Info — and refine brush controls when active */}
+        {activeTool === "refine" ? (
+          <div className="p-3 bg-[hsl(var(--primary)/0.05)] border border-[hsl(var(--primary)/0.15)] rounded-xl space-y-2.5">
+            <p className="text-[12px] text-[hsl(var(--foreground))] leading-relaxed">
+              <span className="inline-flex items-center gap-1 font-medium" style={{ color: 'hsl(142 76% 40%)' }}>● Left-drag</span> = mark tool ·{" "}
+              <span className="inline-flex items-center gap-1 font-medium" style={{ color: 'hsl(0 84% 55%)' }}>● Right-drag</span> = mark background.
+              First box-select a tool, then brush over any chrome it missed.
+            </p>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
+                  Brush Size
+                </label>
+                <span className="text-[12px] font-semibold font-tech">{refineBrush}px</span>
+              </div>
+              <input
+                type="range"
+                min={4}
+                max={40}
+                step={1}
+                value={refineBrush}
+                onChange={(e) => setRefineBrush(parseInt(e.target.value))}
+                className="w-full h-1.5 bg-[hsl(var(--muted))] rounded-full appearance-none cursor-pointer accent-[hsl(var(--primary))]"
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="p-3 bg-[hsl(var(--muted)/0.4)] rounded-xl">
+            <p className="text-[12px] text-[hsl(var(--muted-foreground))] leading-relaxed">
+              {activeTool === "box"
+                ? "Draw a rectangle around one tool — GrabCut segments it. Use Refine Edges to correct shiny metal."
+                : activeTool === "trace"
+                  ? "Click a tool — on-device AI (SlimSAM) traces it precisely, even chrome. First click downloads a small model (one time, cached)." : "Select a listed tool, then drag its anchor points to reshape the curve"}
+            </p>
+          </div>
+        )}
 
         {/* Tool List */}
         <div className="space-y-1.5">
@@ -671,11 +770,22 @@ const ToolsStepPanel: React.FC = () => {
                     <span className="text-[13px] font-medium truncate block">
                       {outline.name}
                     </span>
-                    {outline.areaInMm2 && (
-                      <span className="text-[11px] text-[hsl(var(--muted-foreground))]">
-                        {outline.areaInMm2.toFixed(1)} mm²
-                      </span>
-                    )}
+                    <span className="flex items-center gap-1.5">
+                      {outline.areaInMm2 && (
+                        <span className="text-[11px] text-[hsl(var(--muted-foreground))]">
+                          {outline.areaInMm2.toFixed(1)} mm²
+                        </span>
+                      )}
+                      {outline.confidence !== undefined && outline.confidence < 0.85 && (
+                        <span
+                          className="inline-flex items-center gap-0.5 text-[10px] font-medium text-[hsl(var(--warning))]"
+                          title={`Low detection confidence (${Math.round(outline.confidence * 100)}%) — review or re-trace this outline`}
+                        >
+                          <AlertCircle className="w-2.5 h-2.5" />
+                          {Math.round(outline.confidence * 100)}%
+                        </span>
+                      )}
+                    </span>
                   </div>
                   <button
                     onClick={(e) => {
@@ -952,7 +1062,7 @@ const ExportStepPanel: React.FC = () => {
             transition-all duration-200 flex items-center justify-center gap-1.5
             disabled:opacity-50 disabled:cursor-not-allowed
           "
-          style={{ background: 'linear-gradient(135deg, hsl(160, 84%, 39%), hsl(160, 84%, 50%))', boxShadow: '0 1px 3px rgba(16, 185, 129, 0.25)' }}
+          style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-btn)' }}
         >
           <Download className="w-3 h-3" />
           Export {exportFormat.toUpperCase()}
@@ -980,9 +1090,7 @@ const LayoutStepPanel: React.FC = () => {
 
   const { grid, shapes, layoutTool } = layoutState;
 
-  // Check prerequisites
-  const hasTools = toolOutlines.length > 0;
-  // const isDisabled = !hasTools;
+  // const isDisabled = !toolOutlines.length;
   const isDisabled = false;
 
   // Initialize layout from tools when entering this step
@@ -1554,7 +1662,7 @@ export const ControlPanel: React.FC = () => {
   const { currentStep } = useAppStore();
 
   return (
-    <div className="h-full flex flex-col bg-[hsl(var(--card))]">
+    <div className="h-full flex flex-col sidebar-glass border-l border-[hsl(var(--border)/0.5)]">
       {/* Step Content */}
       <div className="flex-1 overflow-hidden p-3">
         {currentStep === "paper" && <PaperStepPanel />}

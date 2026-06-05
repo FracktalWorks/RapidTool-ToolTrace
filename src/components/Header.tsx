@@ -1,11 +1,6 @@
-/**
- * Header
- * 
- * Application header with branding and download button.
- */
-
 import React from 'react';
-import { Download, Wrench, Moon, Sun } from 'lucide-react';
+import { Download, Hammer, Zap } from 'lucide-react';
+import { RapidToolLogo, ThemeToggle } from '@rapidtool/cad-ui';
 import { useAppStore } from '../stores';
 import { useTheme } from '../hooks';
 
@@ -14,65 +9,76 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ className }) => {
-  const { setCurrentStep, layoutState } = useAppStore();
+  const { setCurrentStep, layoutState, currentStep } = useAppStore();
   const { theme, toggleTheme } = useTheme();
 
   const handleDownloadCAD = () => {
     setCurrentStep('export');
   };
 
+  const steps = ['paper', 'tools', 'layout', 'design', 'export'] as const;
+  const stepLabels = ['Paper', 'Trace', 'Layout', '3D', 'Export'];
+  const currentIdx = steps.indexOf(currentStep);
+
   return (
-    <header className={`h-14 flex items-center justify-between px-5 bg-[hsl(var(--card))] border-b border-[hsl(var(--border))] ${className}`}>
+    <header
+      className={`tech-glass h-14 flex items-center justify-between px-5 border-b border-[hsl(var(--border)/0.6)] ${className}`}
+    >
       {/* Logo & Brand */}
       <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[hsl(var(--primary))] to-[hsl(var(--primary)/0.8)] flex items-center justify-center shadow-sm">
-          <Wrench className="w-5 h-5 text-white" />
-        </div>
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="font-brand text-xl tracking-tight text-[hsl(var(--foreground))]">
-              ToolTrace
-            </h1>
-            <span className="text-[9px] font-medium text-[hsl(var(--muted-foreground))] bg-[hsl(var(--muted))] px-1.5 py-0.5 rounded">
-              BETA
-            </span>
-          </div>
-          <p className="text-[10px] text-[hsl(var(--muted-foreground))] -mt-0.5">
-            By Fracktal Works
-          </p>
-        </div>
+        <RapidToolLogo
+          productName="ToolTrace"
+          icon={<Hammer size={18} />}
+        />
+      </div>
+
+      {/* Step breadcrumb — center */}
+      <div className="hidden md:flex items-center gap-1 absolute left-1/2 -translate-x-1/2">
+        {steps.map((step, idx) => {
+          const isActive = idx === currentIdx;
+          const isDone = idx < currentIdx;
+          return (
+            <React.Fragment key={step}>
+              <button
+                onClick={() => setCurrentStep(step)}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-all"
+                style={{
+                  color: isActive
+                    ? 'hsl(var(--primary))'
+                    : isDone
+                    ? 'hsl(var(--accent))'
+                    : 'hsl(var(--muted-foreground))',
+                  backgroundColor: isActive
+                    ? 'hsl(var(--primary) / 0.1)'
+                    : 'transparent',
+                  border: isActive
+                    ? '1px solid hsl(var(--primary) / 0.25)'
+                    : '1px solid transparent',
+                }}
+              >
+                {isDone && <Zap className="w-3 h-3" style={{ color: 'hsl(var(--accent))' }} />}
+                {stepLabels[idx]}
+              </button>
+              {idx < steps.length - 1 && (
+                <span className="text-[hsl(var(--border))] text-xs select-none">›</span>
+              )}
+            </React.Fragment>
+          );
+        })}
       </div>
 
       {/* Right: Actions */}
       <div className="flex items-center gap-2">
-        {/* Theme Toggle */}
-        <button
-          // onClick={() => { throw new Error('Theme toggle failed'); }}
-          onClick={toggleTheme}
-          className="
-            w-9 h-9 flex items-center justify-center rounded-lg
-            bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))]
-            hover:bg-[hsl(var(--muted)/0.8)] hover:text-[hsl(var(--foreground))]
-            transition-colors
-          "
-          aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-        >
-          {theme === 'light' ? (
-            <Moon className="w-4 h-4" />
-          ) : (
-            <Sun className="w-4 h-4" />
-          )}
-        </button>
+        <ThemeToggle theme={theme} onToggle={toggleTheme} />
 
         {layoutState.shapes.length > 0 && (
           <button
             onClick={handleDownloadCAD}
-            className="
-              flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium
-              bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]
-              hover:bg-[hsl(var(--primary)/0.9)] transition-colors
-              shadow-sm
-            "
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold text-white transition-all hover:opacity-90 active:scale-95"
+            style={{
+              background: 'var(--gradient-primary)',
+              boxShadow: 'var(--shadow-btn)',
+            }}
           >
             <Download className="w-3.5 h-3.5" />
             Export

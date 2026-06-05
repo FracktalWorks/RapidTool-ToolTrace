@@ -236,7 +236,7 @@ const ViewCube: React.FC<ViewCubeProps> = ({ onViewChange, className = '', size 
     ];
     const overlaySize = 0.9; // slightly inset
     faces.forEach(f => {
-      const mat = new THREE.MeshBasicMaterial({ color: 0x0891b2, transparent: true, opacity: 0, depthTest: true, depthWrite: false });
+      const mat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0, depthTest: true, depthWrite: false });
       const plane = new THREE.PlaneGeometry(overlaySize, overlaySize);
       const overlay = new THREE.Mesh(plane, mat);
 
@@ -262,7 +262,7 @@ const ViewCube: React.FC<ViewCubeProps> = ({ onViewChange, className = '', size 
         -half,  half, 0,  -half, -half, 0,
       ]);
       outlineGeom.setAttribute('position', new THREE.BufferAttribute(outlinePositions, 3));
-      const outlineMat = new THREE.LineBasicMaterial({ color: 0x0891b2, transparent: true, opacity: 0, depthTest: true, depthWrite: false });
+      const outlineMat = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0, depthTest: true, depthWrite: false });
       const outline = new THREE.LineSegments(outlineGeom, outlineMat);
       outline.quaternion.copy(overlay.quaternion);
       outline.position.copy(overlay.position);

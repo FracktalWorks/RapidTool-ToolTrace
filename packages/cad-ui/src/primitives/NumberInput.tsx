@@ -35,12 +35,13 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '4px 8px',
     fontSize: '11px',
     fontFamily: 'monospace',
-    border: '1px solid var(--border, #e5e7eb)',
+    border: '1px solid hsl(var(--border, 214.3 31.8% 91.4%))',
     borderRadius: '4px',
-    backgroundColor: 'var(--input-bg, #ffffff)',
-    color: 'var(--input-text, #1f2937)',
+    backgroundColor: 'hsl(var(--card, 0 0% 100%))',
+    color: 'hsl(var(--foreground, 222.2 84% 4.9%))',
     outline: 'none',
     width: '100%',
+    transition: 'border-color 0.15s ease',
   },
 };
 

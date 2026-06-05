@@ -34,13 +34,19 @@ const layoutConfig: Partial<DashboardLayoutConfig> = {
 };
 
 const footerContent = (
-      <div className="h-6 border border-red-500 flex items-center justify-between px-4 text-xs font-tech text-muted-foreground">
-        <div className="flex items-center gap-4 text-gray-600">
-          <span>Ready</span>
-          <span>•</span>
-          <span>WebGL 2.0</span>
-        </div>
-      </div>
+  <div className="h-6 sidebar-glass flex items-center justify-between px-4 border-t border-[hsl(var(--border)/0.4)]">
+    <div className="flex items-center gap-3 text-[10px] font-tech text-[hsl(var(--muted-foreground))]">
+      <span className="flex items-center gap-1">
+        <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--success))] inline-block" />
+        Ready
+      </span>
+      <span className="text-[hsl(var(--border))]">•</span>
+      <span>WebGL 2.0</span>
+    </div>
+    <span className="text-[10px] font-tech text-[hsl(var(--muted-foreground)/0.5)]">
+      ToolTrace
+    </span>
+  </div>
 );
 
 // Step title mapping for properties panel

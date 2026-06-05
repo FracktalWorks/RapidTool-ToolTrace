@@ -101,8 +101,12 @@ export interface AppState {
   setClearanceValue: (value: number) => void;
   
   // Active Tool
-  activeTool: 'select' | 'pan' | 'trace' | 'box' | 'edit' | 'erase';
-  setActiveTool: (tool: 'select' | 'pan' | 'trace' | 'box' | 'edit' | 'erase') => void;
+  activeTool: 'select' | 'pan' | 'trace' | 'box' | 'edit' | 'erase' | 'refine';
+  setActiveTool: (tool: 'select' | 'pan' | 'trace' | 'box' | 'edit' | 'erase' | 'refine') => void;
+
+  // GrabCut refine brush radius (image-space pixels)
+  refineBrush: number;
+  setRefineBrush: (r: number) => void;
   
   // Export Settings
   exportFormat: 'svg' | 'stl';
@@ -182,6 +186,7 @@ const initialState = {
   selectedOutlineId: null,
   clearanceValue: 0.5,
   activeTool: 'box' as const,
+  refineBrush: 12,
   exportFormat: 'svg' as const,
   layoutState: DEFAULT_LAYOUT_STATE,
   designSettings: DEFAULT_DESIGN_SETTINGS,
@@ -355,6 +360,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setClearanceValue: (value) => set({ clearanceValue: value }),
   
   setActiveTool: (tool) => set({ activeTool: tool }),
+
+  setRefineBrush: (r) => set({ refineBrush: r }),
   
   setExportFormat: (format) => set({ exportFormat: format }),
   

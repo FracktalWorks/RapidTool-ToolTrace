@@ -143,19 +143,19 @@ export const DraggableCorners: React.FC<DraggableCornersProps> = ({
       {/* Fill */}
       <polygon
         points={polygonPoints}
-        fill="rgba(59, 130, 246, 0.1)"
-        stroke="none"
-        style={{ pointerEvents: "none" }}
+        style={{ fill: 'hsl(var(--primary) / 0.08)', stroke: 'none', pointerEvents: "none" }}
       />
 
       {/* Border */}
       <polygon
         points={polygonPoints}
-        fill="none"
-        stroke="hsl(198, 89%, 50%)"
-        strokeWidth={strokeWidth}
-        strokeDasharray={`${Math.max(8 / zoom, 4)} ${Math.max(4 / zoom, 2)}`}
-        style={{ pointerEvents: "none" }}
+        style={{
+          fill: 'none',
+          stroke: 'hsl(var(--primary))',
+          strokeWidth: strokeWidth,
+          strokeDasharray: `${Math.max(8 / zoom, 4)} ${Math.max(4 / zoom, 2)}`,
+          pointerEvents: "none",
+        }}
       />
 
       {/* Edge lines (solid for better visibility) */}
@@ -171,9 +171,7 @@ export const DraggableCorners: React.FC<DraggableCornersProps> = ({
             y1={p1.y}
             x2={p2.x}
             y2={p2.y}
-            stroke="hsl(198, 89%, 50%)"
-            strokeWidth={strokeWidth}
-            style={{ pointerEvents: "none" }}
+            style={{ stroke: 'hsl(var(--primary))', strokeWidth, pointerEvents: "none" }}
           />
         );
       })}
@@ -200,14 +198,12 @@ export const DraggableCorners: React.FC<DraggableCornersProps> = ({
               cx={corner.x}
               cy={corner.y}
               r={isDragging ? handleRadius * 1.3 : handleRadius}
-              fill={isDragging ? "hsl(198, 89%, 60%)" : "hsl(198, 89%, 50%)"}
-              stroke="white"
-              strokeWidth={strokeWidth * 1.5}
               style={{
+                fill: isDragging ? 'hsl(var(--primary) / 0.85)' : 'hsl(var(--primary))',
+                stroke: 'white',
+                strokeWidth: strokeWidth * 1.5,
                 cursor: disabled ? "default" : "move",
-                filter: isDragging
-                  ? "drop-shadow(0 0 4px rgba(59, 130, 246, 0.5))"
-                  : "none",
+                filter: isDragging ? 'drop-shadow(0 0 4px hsl(var(--primary) / 0.5))' : 'none',
               }}
               onMouseDown={(e) => handleMouseDown(e, key)}
             />
@@ -216,13 +212,12 @@ export const DraggableCorners: React.FC<DraggableCornersProps> = ({
             <text
               x={corner.x + (key.includes("Left") ? -labelOffset : labelOffset)}
               y={corner.y + (key.includes("top") ? -labelOffset : labelOffset)}
-              fill="hsl(198, 89%, 50%)"
               fontSize={Math.max(10 / zoom, 8)}
               fontFamily="monospace"
               fontWeight="600"
               textAnchor="middle"
               dominantBaseline="middle"
-              style={{ pointerEvents: "none", userSelect: "none" }}
+              style={{ fill: 'hsl(var(--primary))', pointerEvents: "none", userSelect: "none" }}
             >
               {CORNER_LABELS[key]}
             </text>

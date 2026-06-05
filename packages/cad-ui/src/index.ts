@@ -43,3 +43,6 @@ export * from './primitives';
 
 // Stores - Zustand state management
 export * from './stores';
+
+// Branding - RapidTool family logo and theme toggle
+export * from './branding';

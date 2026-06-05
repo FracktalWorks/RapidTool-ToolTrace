@@ -14,8 +14,6 @@ import {
   LayoutGrid,
   Box,
   User,
-  LogOut,
-  Settings,
   AlertCircle,
   ArrowRight,
   X,
@@ -150,75 +148,36 @@ const PrerequisitesNotification: React.FC<PrerequisitesNotificationProps> = ({
 // User Profile Section
 // ============================================================================
 
-const UserProfile: React.FC<{ isExpanded: boolean }> = ({ isExpanded }) => {
-  const [isPopupOpen, setIsPopupOpen] = useState(false);
-
-  const user = {
-    name: 'Santhosh',
-    email: 'santhosh@example.com',
-    avatar: null as string | null,
-  };
-
-  return (
-    <div className="relative">
-      {/* Popup */}
-      {isPopupOpen && (
-        <>
-          <div className="fixed inset-0 z-[9998]" onClick={() => setIsPopupOpen(false)} />
-          <div
-            className={`
-              fixed z-[9999]
-              ${isExpanded 
-                ? 'left-3 bottom-20 w-56' 
-                : 'left-14 bottom-16 w-48'
-              }
-              bg-[hsl(var(--popover))] border border-[hsl(var(--border))]
-              rounded-lg shadow-xl overflow-hidden
-            `}
-          >
-            <div className="p-1">
-              <button
-                onClick={() => setIsPopupOpen(false)}
-                className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] transition-colors"
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span>Profile</span>
-              </button>
-              <button
-                onClick={() => setIsPopupOpen(false)}
-                className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.1)] transition-colors"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Logout</span>
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-
-      <button
-        onClick={() => setIsPopupOpen(!isPopupOpen)}
-        className={`
-          w-full flex items-center rounded-lg transition-colors hover:bg-[hsl(var(--muted))]
-          ${isExpanded ? 'gap-3 px-3 py-2.5' : 'justify-center px-2 py-2.5'}
-        `}
-      >
-        <div className="w-7 h-7 rounded-full bg-[hsl(var(--primary))] flex items-center justify-center shrink-0">
-          {user.avatar ? (
-            <img src={user.avatar} alt={user.name} className="w-7 h-7 rounded-full object-cover" />
-          ) : (
-            <User className="w-3.5 h-3.5 text-[hsl(var(--primary-foreground))]" />
-          )}
-        </div>
-        {isExpanded && (
-          <div className="flex-1 text-left overflow-hidden">
-            <p className="text-xs font-medium truncate">{user.name}</p>
-          </div>
-        )}
-      </button>
+const UserProfile: React.FC<{ isExpanded: boolean }> = ({ isExpanded }) => (
+  <div
+    className={`
+      w-full flex items-center rounded-lg tech-transition
+      border border-[hsl(var(--border)/0.5)]
+      bg-[hsl(var(--muted)/0.3)] hover:bg-[hsl(var(--muted)/0.6)]
+      ${isExpanded ? 'gap-2.5 px-3 py-2' : 'justify-center px-2 py-2'}
+    `}
+    title="Sign in coming in Phase 2"
+  >
+    {/* Avatar placeholder */}
+    <div
+      className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
+      style={{ background: 'hsl(var(--muted))', border: '1px dashed hsl(var(--border))' }}
+    >
+      <User className="w-3 h-3 text-[hsl(var(--muted-foreground))]" />
     </div>
-  );
-};
+
+    {isExpanded && (
+      <div className="flex-1 min-w-0">
+        <p className="text-[11px] font-medium text-[hsl(var(--muted-foreground))] truncate">
+          Guest
+        </p>
+        <p className="text-[10px] text-[hsl(var(--muted-foreground)/0.6)] truncate">
+          Sign in — coming soon
+        </p>
+      </div>
+    )}
+  </div>
+);
 
 // ============================================================================
 // Main Sidebar Component
@@ -328,7 +287,7 @@ export const Sidebar: React.FC = () => {
   }, [currentStep, prerequisitesModal.isOpen, closePrerequisitesModal]);
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden sidebar-glass">
       {/* Sidebar Title - positioned to work with DashboardLayout header */}
       <div className="px-3 py-2 border-b border-[hsl(var(--border))] flex items-center justify-between">
         {isExpanded && <h3 className="text-xs font-semibold text-[hsl(var(--foreground))]">Steps</h3>}

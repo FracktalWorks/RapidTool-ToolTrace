@@ -19,7 +19,7 @@ import type { Point2D } from '../stores';
 import { DraggableCorners } from './DraggableCorners';
 import { TracingOverlay } from './TracingOverlay';
 import { calculatePixelsPerMm, createToolOutline, contourToSVGPath } from '../lib/geometry';
-import { traceTool, traceRegion } from '../workers';
+import { traceTool, grabCutInit, grabCutRefine, samSegmentPoint, type SamLoadProgress } from '../workers';
 
 // ============================================================================
 // Constants
@@ -203,16 +203,17 @@ const PaperOverlay: React.FC<PaperOverlayProps> = ({ corners, zoom }) => {
       {/* Fill */}
       <polygon
         points={points}
-        fill="rgba(59, 130, 246, 0.08)"
-        stroke="none"
+        style={{ fill: 'hsl(var(--primary) / 0.07)', stroke: 'none' }}
       />
       {/* Border */}
       <polygon
         points={points}
-        fill="none"
-        stroke="hsl(198, 89%, 50%)"
-        strokeWidth={Math.max(2 / zoom, 1)}
-        strokeDasharray={`${Math.max(8 / zoom, 4)} ${Math.max(4 / zoom, 2)}`}
+        style={{
+          fill: 'none',
+          stroke: 'hsl(var(--primary))',
+          strokeWidth: Math.max(2 / zoom, 1),
+          strokeDasharray: `${Math.max(8 / zoom, 4)} ${Math.max(4 / zoom, 2)}`,
+        }}
       />
       {/* Corner handles */}
       {[corners.topLeft, corners.topRight, corners.bottomRight, corners.bottomLeft].map((corner, i) => (
@@ -221,9 +222,11 @@ const PaperOverlay: React.FC<PaperOverlayProps> = ({ corners, zoom }) => {
           cx={corner.x}
           cy={corner.y}
           r={Math.max(6 / zoom, 4)}
-          fill="hsl(198, 89%, 50%)"
-          stroke="white"
-          strokeWidth={Math.max(2 / zoom, 1)}
+          style={{
+            fill: 'hsl(var(--primary))',
+            stroke: 'white',
+            strokeWidth: Math.max(2 / zoom, 1),
+          }}
           className="cursor-move"
         />
       ))}
@@ -535,7 +538,13 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     activeTool,
     clearanceValue,
     updateToolOutlineSmoothed,
+    refineBrush,
   } = useAppStore();
+
+  // Outline currently bound to the live GrabCut session (target of refine strokes).
+  const [grabcutOutlineId, setGrabcutOutlineId] = useState<string | null>(null);
+  // First-time SlimSAM model download progress (null when not loading).
+  const [samProgress, setSamProgress] = useState<SamLoadProgress | null>(null);
 
   const {
     containerRef,
@@ -570,10 +579,21 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
 
     setIsTracing(true);
     try {
-      // Use worker-based tracing (falls back to main thread if needed)
-      const result = await traceTool(imageUrl, point.x, point.y);
+      // PRIMARY: SlimSAM (vision model, on-device, lazy-loaded) — pixel-accurate
+      // even on chrome. Falls back to classical tracing if SAM is unavailable.
+      let result = null;
+      try {
+        result = await samSegmentPoint(imageUrl, point.x, point.y, setSamProgress);
+      } catch (samErr) {
+        console.warn('SAM unavailable, falling back to classical trace:', samErr);
+      } finally {
+        setSamProgress(null);
+      }
+      if (!result) {
+        result = await traceTool(imageUrl, point.x, point.y, paperCorners || undefined);
+      }
       if (result) {
-        const outline = createToolOutline(result.points, pixelsPerMm || undefined);
+        const outline = createToolOutline(result.points, pixelsPerMm || undefined, result.confidence);
         addToolOutline(outline);
       }
     } catch (error) {
@@ -583,23 +603,46 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     }
   }, [imageUrl, isTracing, pixelsPerMm, toolOutlines.length, addToolOutline, paperCorners]);
 
-  // Handle box selection for tracing
+  // Handle box selection — GrabCut graph-cut segmentation. Starts a refinable
+  // session (the user can then paint strokes to correct bright chrome).
   const handleBoxSelect = useCallback(async (rect: { x: number; y: number; width: number; height: number }) => {
     if (!imageUrl || isTracing) return;
 
     setIsTracing(true);
     try {
-      const result = await traceRegion(imageUrl, rect);
+      const result = await grabCutInit(imageUrl, rect);
       if (result) {
-        const outline = createToolOutline(result.points, pixelsPerMm || undefined);
+        const outline = createToolOutline(result.points, pixelsPerMm || undefined, result.confidence);
         addToolOutline(outline);
+        setGrabcutOutlineId(outline.id); // bind refine strokes to this tool
       }
     } catch (error) {
-      console.error('Box tracing error:', error);
+      console.error('GrabCut error:', error);
     } finally {
       setIsTracing(false);
     }
   }, [imageUrl, isTracing, pixelsPerMm, toolOutlines.length, addToolOutline]);
+
+  // Apply a GrabCut refinement stroke to the active session, then update the
+  // bound outline with the re-solved contour.
+  const handleApplyStroke = useCallback(async (points: Point2D[], fg: boolean) => {
+    if (!grabcutOutlineId || isTracing) return;
+    setIsTracing(true);
+    try {
+      const fgStrokes = fg ? [{ points }] : [];
+      const bgStrokes = fg ? [] : [{ points }];
+      const result = await grabCutRefine(fgStrokes, bgStrokes, refineBrush);
+      if (result && result.points.length >= 3) {
+        // Re-smooth and update the bound outline in place.
+        const { smoothContour } = await import('../lib/geometry');
+        updateToolOutlineSmoothed(grabcutOutlineId, smoothContour(result.points, 0.5, 2));
+      }
+    } catch (error) {
+      console.error('GrabCut refine error:', error);
+    } finally {
+      setIsTracing(false);
+    }
+  }, [grabcutOutlineId, isTracing, refineBrush, updateToolOutlineSmoothed]);
 
   // Reset loaded state when image changes
   useEffect(() => {
@@ -865,6 +908,8 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
                   onImageClick={handleTracingClick}
                   onBoxSelect={handleBoxSelect}
                   onUpdateOutline={updateToolOutlineSmoothed}
+                  onApplyStroke={handleApplyStroke}
+                  brushRadius={refineBrush}
                 />
               </div>
             )}
@@ -888,6 +933,18 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
           </div>
         )}
       </div>
+
+      {/* SlimSAM first-load progress (one-time model download) */}
+      {samProgress && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2.5 px-4 py-2 rounded-xl tech-glass shadow-lg">
+          <div className="w-3.5 h-3.5 rounded-full border-2 border-[hsl(var(--primary))] border-t-transparent animate-spin" />
+          <span className="text-[12px] font-medium text-[hsl(var(--foreground))]">
+            Loading AI model
+            {samProgress.progress ? ` — ${Math.round(samProgress.progress)}%` : '…'}
+            <span className="text-[hsl(var(--muted-foreground))]"> (one time, then cached)</span>
+          </span>
+        </div>
+      )}
 
       {/* Image Info Bar */}
       {imageSize && (

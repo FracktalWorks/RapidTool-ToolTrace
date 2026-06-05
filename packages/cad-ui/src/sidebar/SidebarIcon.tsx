@@ -240,7 +240,7 @@ export const SidebarIcon: React.FC<SidebarIconProps> = ({
 
   const handleMouseLeave = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (!active && !disabled) {
-      e.currentTarget.style.backgroundColor = variant === 'filled' 
+      e.currentTarget.style.backgroundColor = variant === 'filled'
         ? 'var(--sidebar-icon-filled-bg, rgba(0, 0, 0, 0.05))'
         : 'transparent';
       e.currentTarget.style.color = 'var(--sidebar-icon-fg, var(--foreground, #374151))';
