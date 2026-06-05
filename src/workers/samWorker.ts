@@ -230,7 +230,6 @@ async function autoSegment(id: string, url: string, points: { x: number; y: numb
     area: number;
     thumb: Uint8Array;
     thumbArea: number;
-    filledThumb?: Uint8Array;
   };
   const cands: Cand[] = [];
 
@@ -245,24 +244,91 @@ async function autoSegment(id: string, url: string, points: { x: number; y: numb
     cands.push({ data: r.data, W: r.width, H: r.height, score: r.score, area, thumb: th.t, thumbArea: th.area });
   }
 
-  // Containment-aware NMS: keep largest; drop anything mostly inside a kept mask's filled contour.
-  cands.sort((a, b) => b.area - a.area);
-  const kept: Cand[] = [];
-  for (const c of cands) {
-    let covered = false;
-    for (const k of kept) {
-      let inter = 0;
-      const kt = k.filledThumb || k.thumb;
-      for (let p = 0; p < 4096; p++) if (c.thumb[p] && kt[p]) inter++;
-      if (c.thumbArea > 0 && inter / c.thumbArea > 0.6) { covered = true; break; }
+  const n = cands.length;
+  if (n === 0) return { masks: [], scale: session.scaleToOriginal };
+
+  // Union-Find to group masks that overlap by at least 15% of the smaller mask's thumbnail area.
+  // This merges sub-parts, overlapping frames/inserts, and split tool bodies (like jaw + body).
+  const parent = new Int32Array(n);
+  for (let i = 0; i < n; i++) parent[i] = i;
+
+  function find(i: number): number {
+    let root = i;
+    while (parent[root] !== root) root = parent[root];
+    let curr = i;
+    while (curr !== root) {
+      const nxt = parent[curr];
+      parent[curr] = root;
+      curr = nxt;
     }
-    if (!covered) {
-      c.filledThumb = fillHoles64(c.thumb);
-      kept.push(c);
+    return root;
+  }
+
+  function union(i: number, j: number) {
+    const rootI = find(i);
+    const rootJ = find(j);
+    if (rootI !== rootJ) {
+      parent[rootI] = rootJ;
     }
   }
 
-  const masks = kept.map((k) => ({ mask: k.data.buffer as ArrayBuffer, width: k.W, height: k.H, score: k.score }));
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const cA = cands[i];
+      const cB = cands[j];
+      let inter = 0;
+      for (let p = 0; p < 4096; p++) {
+        if (cA.thumb[p] && cB.thumb[p]) inter++;
+      }
+      const minThumbArea = Math.min(cA.thumbArea, cB.thumbArea);
+      // If the intersection is > 15% of the smaller area, they belong to the same tool
+      if (minThumbArea > 0 && inter / minThumbArea > 0.15) {
+        union(i, j);
+      }
+    }
+  }
+
+  // Group indices by root
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root)!.push(i);
+  }
+
+  // Merge each group into a single candidate
+  const mergedCands: { data: Uint8Array; W: number; H: number; score: number; area: number }[] = [];
+  for (const [_, indices] of groups.entries()) {
+    const first = cands[indices[0]];
+    const W = first.W, H = first.H;
+    const mergedData = new Uint8Array(W * H);
+    let maxScore = 0;
+
+    // Pixel-wise OR of all masks in the group
+    for (const idx of indices) {
+      const c = cands[idx];
+      maxScore = Math.max(maxScore, c.score);
+      for (let p = 0; p < W * H; p++) {
+        if (c.data[p]) mergedData[p] = 255;
+      }
+    }
+
+    // Compute final area
+    let finalArea = 0;
+    for (let p = 0; p < W * H; p++) {
+      if (mergedData[p]) finalArea++;
+    }
+
+    // Skip if merged area violates boundaries
+    if (finalArea < minArea || finalArea > maxArea) continue;
+
+    mergedCands.push({ data: mergedData, W, H, score: maxScore, area: finalArea });
+  }
+
+  // Sort merged candidates by area descending
+  mergedCands.sort((a, b) => b.area - a.area);
+
+  const masks = mergedCands.map((m) => ({ mask: m.data.buffer as ArrayBuffer, width: m.W, height: m.H, score: m.score }));
   return { masks, scale: session.scaleToOriginal };
 }
 
