@@ -424,8 +424,6 @@ const ToolsStepPanel: React.FC = () => {
     pixelsPerMm,
     paperCorners,
     snapToPill,
-    refineBrush,
-    setRefineBrush,
   } = useAppStore();
 
   const [isAutoDetecting, setIsAutoDetecting] = useState(false);
@@ -684,7 +682,7 @@ const ToolsStepPanel: React.FC = () => {
             </button>
           </div>
 
-          {/* Refine (GrabCut) — full-width, highlights the precision tool */}
+          {/* Refine — full-width, highlights the precision tool */}
           <button
             onClick={() => setActiveTool(activeTool === "refine" ? "box" : "refine")}
             disabled={isDisabled}
@@ -700,45 +698,28 @@ const ToolsStepPanel: React.FC = () => {
             <div className="flex-1">
               <div className="text-[13px] font-medium">Refine Edges</div>
               <div className="text-[11px] text-[hsl(var(--muted-foreground))] mt-0.5">
-                Brush to correct a box-traced tool (great for metal)
+                Click to add or remove regions from the selected tool
               </div>
             </div>
           </button>
         </div>
 
-        {/* Mode Info — and refine brush controls when active */}
+        {/* Mode Info — refine instructions when active */}
         {activeTool === "refine" ? (
           <div className="p-3 bg-[hsl(var(--primary)/0.05)] border border-[hsl(var(--primary)/0.15)] rounded-xl space-y-2.5">
             <p className="text-[12px] text-[hsl(var(--foreground))] leading-relaxed">
-              <span className="inline-flex items-center gap-1 font-medium" style={{ color: 'hsl(142 76% 40%)' }}>● Left-drag</span> = mark tool ·{" "}
-              <span className="inline-flex items-center gap-1 font-medium" style={{ color: 'hsl(0 84% 55%)' }}>● Right-drag</span> = mark background.
-              First box-select a tool, then brush over any chrome it missed.
+              <span className="inline-flex items-center gap-1 font-medium" style={{ color: 'hsl(142 76% 40%)' }}>● Left-click</span> = add region ·{" "}
+              <span className="inline-flex items-center gap-1 font-medium" style={{ color: 'hsl(0 84% 55%)' }}>● Shift+click</span> = remove region.
+              First select a tool outline in the list or viewport, then click to refine.
             </p>
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
-                  Brush Size
-                </label>
-                <span className="text-[12px] font-semibold font-tech">{refineBrush}px</span>
-              </div>
-              <input
-                type="range"
-                min={4}
-                max={40}
-                step={1}
-                value={refineBrush}
-                onChange={(e) => setRefineBrush(parseInt(e.target.value))}
-                className="w-full h-1.5 bg-[hsl(var(--muted))] rounded-full appearance-none cursor-pointer accent-[hsl(var(--primary))]"
-              />
-            </div>
           </div>
         ) : (
           <div className="p-3 bg-[hsl(var(--muted)/0.4)] rounded-xl">
             <p className="text-[12px] text-[hsl(var(--muted-foreground))] leading-relaxed">
               {activeTool === "box"
-                ? "Draw a rectangle around one tool — GrabCut segments it. Use Refine Edges to correct shiny metal."
+                ? "Draw a rectangle around one tool — GrabCut segments it. Use Refine Edges to correct details."
                 : activeTool === "trace"
-                  ? "Click a tool — on-device AI (SlimSAM) traces it precisely, even chrome. First click downloads a small model (one time, cached)." : "Select a listed tool, then drag its anchor points to reshape the curve"}
+                  ? "Click a tool — on-device AI (SAM 2) traces it precisely. Select a tool to refine it: Left-click to add, Shift+click to subtract." : "Select a listed tool, then drag its anchor points to reshape the curve"}
             </p>
           </div>
         )}

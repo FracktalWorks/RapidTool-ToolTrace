@@ -79,14 +79,27 @@ export async function samPreload(onProgress?: (p: SamLoadProgress) => void): Pro
  */
 export async function samSegmentPoint(
   imageUrl: string,
-  x: number,
-  y: number,
+  clicksOrX: { x: number; y: number; label: number }[] | number,
+  y?: number | ((p: SamLoadProgress) => void),
   onProgress?: (p: SamLoadProgress) => void,
 ): Promise<ToolTracingResult | null> {
+  let clicks: { x: number; y: number; label: number }[];
+  let progressCb = onProgress;
+
+  if (Array.isArray(clicksOrX)) {
+    clicks = clicksOrX;
+    // When array is passed, onProgress is the 3rd argument (mapped to y)
+    if (typeof y === 'function') {
+      progressCb = y as any;
+    }
+  } else {
+    clicks = [{ x: clicksOrX, y: y as number, label: 1 }];
+  }
+
   const seg = await request<{ mask: ArrayBuffer; width: number; height: number; score: number; scale: number } | null>(
     'segmentPoint',
-    { url: imageUrl, x, y },
-    onProgress,
+    { url: imageUrl, clicks },
+    progressCb,
   );
   everLoaded = true;
   if (!seg) return null;

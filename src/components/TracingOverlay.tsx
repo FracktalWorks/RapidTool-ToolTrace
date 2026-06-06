@@ -56,13 +56,9 @@ interface TracingOverlayProps {
   isTracing: boolean;
   onSelect: (id: string | null) => void;
   onDelete: (id: string) => void;
-  onImageClick: (point: Point2D) => void;
+  onImageClick: (point: Point2D, label: number) => void;
   onBoxSelect?: (rect: { x: number; y: number; width: number; height: number }) => void;
   onUpdateOutline?: (id: string, points: Point2D[]) => void;
-  /** GrabCut refine: a completed brush stroke. fg=true marks tool, false marks background. */
-  onApplyStroke?: (points: Point2D[], fg: boolean) => void;
-  /** Brush radius in image-space pixels for the refine tool. */
-  brushRadius?: number;
 }
 
 // ============================================================================
@@ -83,8 +79,6 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
   onImageClick,
   onBoxSelect,
   onUpdateOutline,
-  onApplyStroke,
-  brushRadius = 12,
 }) => {
   // State for box selection
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(null);
@@ -109,11 +103,6 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTool, selectedId]);
 
-  // State for GrabCut refine strokes. `committed` are shown for visual feedback;
-  // `current` is the in-progress brush stroke. fg = mark tool, bg = mark background.
-  const [committedStrokes, setCommittedStrokes] = useState<{ points: Point2D[]; fg: boolean }[]>([]);
-  const [currentStroke, setCurrentStroke] = useState<{ points: Point2D[]; fg: boolean } | null>(null);
-
   // Get image coordinates from mouse event
   const getImageCoords = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     const svg = e.currentTarget;
@@ -126,19 +115,13 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
     };
   }, [imageWidth, imageHeight]);
 
-  // Handle mouse down for box selection, click tracing, or refine brush
+  // Handle mouse down for box selection or click tracing
   const handleMouseDown = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     if (isTracing) return;
 
     if (currentTool === 'box') {
       const { x, y } = getImageCoords(e);
       setSelectionRect({ startX: x, startY: y, endX: x, endY: y });
-      setIsDrawing(true);
-    } else if (currentTool === 'refine') {
-      // Left button = mark tool (foreground), right button = mark background.
-      const fg = e.button !== 2;
-      const { x, y } = getImageCoords(e);
-      setCurrentStroke({ points: [{ x, y }], fg });
       setIsDrawing(true);
     }
   }, [currentTool, isTracing, getImageCoords]);
@@ -163,32 +146,15 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
       return;
     }
 
-    if (isDrawing && currentTool === 'refine' && currentStroke) {
-      const { x, y } = getImageCoords(e);
-      setCurrentStroke(prev => prev ? { ...prev, points: [...prev.points, { x, y }] } : null);
-      return;
-    }
-
     if (!isDrawing || currentTool !== 'box' || !selectionRect) return;
     const { x, y } = getImageCoords(e);
     setSelectionRect(prev => prev ? { ...prev, endX: x, endY: y } : null);
-  }, [isDrawing, currentTool, selectionRect, getImageCoords, dragPoint, onUpdateOutline, outlines, currentStroke, editAnchors]);
+  }, [isDrawing, currentTool, selectionRect, getImageCoords, dragPoint, onUpdateOutline, outlines, editAnchors]);
 
-  // Handle mouse up for box selection, dragging, or refine brush
+  // Handle mouse up for box selection or dragging
   const handleMouseUp = useCallback((_e: React.MouseEvent<SVGSVGElement>) => {
     if (dragPoint) {
       setDragPoint(null);
-      return;
-    }
-
-    if (currentTool === 'refine' && currentStroke) {
-      // Commit the stroke for visual feedback and send it to GrabCut refine.
-      if (currentStroke.points.length > 0 && onApplyStroke) {
-        setCommittedStrokes(prev => [...prev, currentStroke]);
-        onApplyStroke(currentStroke.points, currentStroke.fg);
-      }
-      setCurrentStroke(null);
-      setIsDrawing(false);
       return;
     }
 
@@ -205,23 +171,16 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
     }
     setIsDrawing(false);
     setSelectionRect(null);
-  }, [currentTool, isDrawing, selectionRect, onBoxSelect, dragPoint, currentStroke, onApplyStroke]);
+  }, [currentTool, isDrawing, selectionRect, onBoxSelect, dragPoint]);
 
-  // Clear refine strokes when leaving the refine tool.
-  React.useEffect(() => {
-    if (currentTool !== 'refine') {
-      setCommittedStrokes([]);
-      setCurrentStroke(null);
-    }
-  }, [currentTool]);
-
-  // Handle click on SVG background (for click-to-trace)
+  // Handle click on SVG background (for click-to-trace/refine)
   const handleBackgroundClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
-    if (currentTool !== 'trace' || isTracing) return;
+    if ((currentTool !== 'trace' && currentTool !== 'refine') || isTracing) return;
     
     const { x, y } = getImageCoords(e);
-    console.log('Click at image coords:', x, y);
-    onImageClick({ x, y });
+    const label = (e.shiftKey || e.ctrlKey || e.metaKey) ? 0 : 1;
+    console.log('Click at image coords:', x, y, 'label:', label);
+    onImageClick({ x, y }, label);
   }, [currentTool, isTracing, getImageCoords, onImageClick]);
 
   // Handle click on outline
@@ -249,11 +208,6 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
     }
   }, [currentTool, isTracing]);
 
-  // Render a refine stroke as an SVG polyline path.
-  const strokePath = (pts: Point2D[]) =>
-    pts.length === 0 ? '' : `M ${pts.map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' L ')}`;
-  const allStrokes = currentStroke ? [...committedStrokes, currentStroke] : committedStrokes;
-
   // Stroke width adjusted for zoom
   const strokeWidth = Math.max(1, 2 / zoom);
   const handleRadius = Math.max(4, 8 / zoom);
@@ -280,20 +234,6 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
       onMouseLeave={handleMouseUp}
       onContextMenu={(e) => { if (currentTool === 'refine') e.preventDefault(); }}
     >
-      {/* GrabCut refine strokes — green = mark tool, red = mark background */}
-      {currentTool === 'refine' && allStrokes.map((s, i) => (
-        <path
-          key={`stroke-${i}`}
-          d={strokePath(s.points)}
-          fill="none"
-          stroke={s.fg ? 'hsl(142 76% 47%)' : 'hsl(0 84% 60%)'}
-          strokeWidth={brushRadius * 2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          opacity={0.45}
-          style={{ pointerEvents: 'none' }}
-        />
-      ))}
 
       {/* Selection rectangle for box tool */}
       {selectionBox && selectionBox.width > 0 && selectionBox.height > 0 && (
@@ -339,7 +279,7 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
             {/* Main outline */}
             <path
               d={path}
-              fill={isSelected ? `${outline.color}20` : 'transparent'}
+              fill={isSelected ? `${outline.color}38` : `${outline.color}15`}
               stroke={outline.color}
               strokeWidth={isSelected ? strokeWidth * 2 : strokeWidth}
               onClick={(e) => handleOutlineClick(e, outline.id)}
@@ -414,6 +354,20 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
                   </>
                 )}
                 
+                {/* Refinement prompt click dots */}
+                {(currentTool === 'trace' || currentTool === 'refine') && outline.samClicks && outline.samClicks.map((click, i) => (
+                  <circle
+                    key={`click-${i}`}
+                    cx={click.x}
+                    cy={click.y}
+                    r={Math.max(4, 6 / zoom)}
+                    fill={click.label === 1 ? 'hsl(142 76% 47%)' : 'hsl(0 84% 60%)'}
+                    stroke="white"
+                    strokeWidth={Math.max(1, 1.5 / zoom)}
+                    style={{ pointerEvents: 'none' }}
+                  />
+                ))}
+
                 {/* Label */}
                 <text
                   x={outline.boundingBox.minX}

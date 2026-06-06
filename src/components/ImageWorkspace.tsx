@@ -538,11 +538,10 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     activeTool,
     clearanceValue,
     updateToolOutlineSmoothed,
+    updateToolOutlineRefined,
     refineBrush,
   } = useAppStore();
 
-  // Outline currently bound to the live GrabCut session (target of refine strokes).
-  const [grabcutOutlineId, setGrabcutOutlineId] = useState<string | null>(null);
   // First-time SlimSAM model download progress (null when not loading).
   const [samProgress, setSamProgress] = useState<SamLoadProgress | null>(null);
 
@@ -574,37 +573,60 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
   }, [setPaperCorners, setPixelsPerMm]);
 
   // Handle tracing click
-  const handleTracingClick = useCallback(async (point: Point2D) => {
+  const handleTracingClick = useCallback(async (point: Point2D, label: number = 1) => {
     if (!imageUrl || isTracing) return;
 
     setIsTracing(true);
     try {
-      // PRIMARY: SlimSAM (vision model, on-device, lazy-loaded) — pixel-accurate
-      // even on chrome. Falls back to classical tracing if SAM is unavailable.
-      let result = null;
-      try {
-        result = await samSegmentPoint(imageUrl, point.x, point.y, setSamProgress);
-      } catch (samErr) {
-        console.warn('SAM unavailable, falling back to classical trace:', samErr);
-      } finally {
-        setSamProgress(null);
-      }
-      if (!result) {
-        result = await traceTool(imageUrl, point.x, point.y, paperCorners || undefined);
-      }
-      if (result) {
-        const outline = createToolOutline(result.points, pixelsPerMm || undefined, result.confidence);
-        addToolOutline(outline);
+      if (activeTool === 'refine') {
+        // Refinement of an existing tool
+        if (selectedOutlineId) {
+          const outline = toolOutlines.find(o => o.id === selectedOutlineId);
+          if (outline) {
+            const currentClicks = outline.samClicks ? [...outline.samClicks] : [];
+            currentClicks.push({ x: point.x, y: point.y, label });
+
+            let result = null;
+            try {
+              result = await samSegmentPoint(imageUrl, currentClicks, setSamProgress);
+            } catch (samErr) {
+              console.warn('SAM refinement failed:', samErr);
+            } finally {
+              setSamProgress(null);
+            }
+
+            if (result) {
+              updateToolOutlineRefined(selectedOutlineId, result.points, currentClicks);
+            }
+          }
+        }
+      } else {
+        // New tool creation
+        const initialClicks = [{ x: point.x, y: point.y, label: 1 }];
+        let result = null;
+        try {
+          result = await samSegmentPoint(imageUrl, initialClicks, setSamProgress);
+        } catch (samErr) {
+          console.warn('SAM unavailable, falling back to classical trace:', samErr);
+        } finally {
+          setSamProgress(null);
+        }
+        if (!result) {
+          result = await traceTool(imageUrl, point.x, point.y, paperCorners || undefined);
+        }
+        if (result) {
+          const outline = createToolOutline(result.points, pixelsPerMm || undefined, result.confidence, initialClicks);
+          addToolOutline(outline);
+        }
       }
     } catch (error) {
       console.error('Tracing error:', error);
     } finally {
       setIsTracing(false);
     }
-  }, [imageUrl, isTracing, pixelsPerMm, toolOutlines.length, addToolOutline, paperCorners]);
+  }, [imageUrl, isTracing, pixelsPerMm, toolOutlines, selectedOutlineId, addToolOutline, updateToolOutlineRefined, paperCorners, activeTool]);
 
-  // Handle box selection — GrabCut graph-cut segmentation. Starts a refinable
-  // session (the user can then paint strokes to correct bright chrome).
+  // Handle box selection — GrabCut graph-cut segmentation.
   const handleBoxSelect = useCallback(async (rect: { x: number; y: number; width: number; height: number }) => {
     if (!imageUrl || isTracing) return;
 
@@ -614,7 +636,6 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
       if (result) {
         const outline = createToolOutline(result.points, pixelsPerMm || undefined, result.confidence);
         addToolOutline(outline);
-        setGrabcutOutlineId(outline.id); // bind refine strokes to this tool
       }
     } catch (error) {
       console.error('GrabCut error:', error);
@@ -622,27 +643,6 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
       setIsTracing(false);
     }
   }, [imageUrl, isTracing, pixelsPerMm, toolOutlines.length, addToolOutline]);
-
-  // Apply a GrabCut refinement stroke to the active session, then update the
-  // bound outline with the re-solved contour.
-  const handleApplyStroke = useCallback(async (points: Point2D[], fg: boolean) => {
-    if (!grabcutOutlineId || isTracing) return;
-    setIsTracing(true);
-    try {
-      const fgStrokes = fg ? [{ points }] : [];
-      const bgStrokes = fg ? [] : [{ points }];
-      const result = await grabCutRefine(fgStrokes, bgStrokes, refineBrush);
-      if (result && result.points.length >= 3) {
-        // Re-smooth and update the bound outline in place.
-        const { smoothContour } = await import('../lib/geometry');
-        updateToolOutlineSmoothed(grabcutOutlineId, smoothContour(result.points, 0.5, 2));
-      }
-    } catch (error) {
-      console.error('GrabCut refine error:', error);
-    } finally {
-      setIsTracing(false);
-    }
-  }, [grabcutOutlineId, isTracing, refineBrush, updateToolOutlineSmoothed]);
 
   // Reset loaded state when image changes
   useEffect(() => {
@@ -908,8 +908,6 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
                   onImageClick={handleTracingClick}
                   onBoxSelect={handleBoxSelect}
                   onUpdateOutline={updateToolOutlineSmoothed}
-                  onApplyStroke={handleApplyStroke}
-                  brushRadius={refineBrush}
                 />
               </div>
             )}

@@ -12,6 +12,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import {
   env,
+  Sam2Model,
   SamModel,
   AutoProcessor,
   RawImage,
@@ -24,7 +25,7 @@ if (env.backends?.onnx?.wasm) {
   env.backends.onnx.wasm.numThreads = 1;
 }
 
-const MODEL_ID = 'Xenova/slimsam-77-uniform';
+const MODEL_ID = 'onnx-community/sam2.1-hiera-tiny-ONNX';
 
 interface WorkerMessage { id: string; type: 'load' | 'embed' | 'segmentPoint' | 'autoSegment' | 'clear'; payload: any }
 interface WorkerResponse { id: string; type: 'success' | 'error' | 'progress'; payload: any }
@@ -36,6 +37,7 @@ const MAX_DIM = 1024;
 let model: any = null;
 let processor: any = null;
 let loadPromise: Promise<void> | null = null;
+let isSam2 = true;
 
 // Per-image session — embeddings are reused across all prompts on the image.
 let session: {
@@ -43,8 +45,7 @@ let session: {
   image: any;            // downscaled RawImage actually fed to SAM
   procScale: number;     // original → processing  (mult input points by this)
   scaleToOriginal: number; // processing → original (mult output contour by this)
-  imageEmbeddings: any;
-  imagePositionalEmbeddings: any;
+  embeddings: any;
   originalSizes: any;
   reshapedInputSizes: any;
 } | null = null;
@@ -65,13 +66,30 @@ async function ensureLoaded(id: string): Promise<void> {
         post({ id, type: 'progress', payload: { status: p.status, file: p.file, progress: p.progress ?? 0 } });
       }
     };
-    // Quantized (q8) keeps the download small; fall back to default dtype if needed.
+    
     try {
-      model = await SamModel.from_pretrained(MODEL_ID, { dtype: 'q8', device, progress_callback } as any);
-    } catch {
-      model = await SamModel.from_pretrained(MODEL_ID, { progress_callback } as any);
+      // Try to load SAM 2.1 Hiera Tiny
+      console.log(`%c[SAM] Attempting to load SAM 2.1 Tiny (${device})...`, 'color: #3b82f6; font-weight: bold;');
+      model = await Sam2Model.from_pretrained(MODEL_ID, { device, progress_callback } as any);
+      processor = await AutoProcessor.from_pretrained(MODEL_ID);
+      isSam2 = true;
+      console.log('%c===================================================', 'color: #22c55e; font-weight: bold;');
+      console.log(`%c[SAM] LOUD LOG: SUCCESSFULLY LOADED SAM 2.1 Tiny (${device})`, 'color: #22c55e; font-weight: bold; font-size: 14px;');
+      console.log('%c===================================================', 'color: #22c55e; font-weight: bold;');
+    } catch (sam2Err) {
+      console.warn('%c[SAM] LOUD LOG: Failed to load SAM 2.1! Falling back to SlimSAM...', 'color: #f59e0b; font-weight: bold; font-size: 12px;', sam2Err);
+      const SLIMSAM_MODEL_ID = 'Xenova/slimsam-77-uniform';
+      try {
+        model = await SamModel.from_pretrained(SLIMSAM_MODEL_ID, { dtype: 'q8', device, progress_callback } as any);
+      } catch {
+        model = await SamModel.from_pretrained(SLIMSAM_MODEL_ID, { progress_callback } as any);
+      }
+      processor = await AutoProcessor.from_pretrained(SLIMSAM_MODEL_ID);
+      isSam2 = false;
+      console.log('%c===================================================', 'color: #3b82f6; font-weight: bold;');
+      console.log(`%c[SAM] LOUD LOG: SUCCESSFULLY LOADED SLIMSAM FALLBACK (${device})`, 'color: #3b82f6; font-weight: bold; font-size: 12px;');
+      console.log('%c===================================================', 'color: #3b82f6; font-weight: bold;');
     }
-    processor = await AutoProcessor.from_pretrained(MODEL_ID);
   })();
 
   return loadPromise;
@@ -91,48 +109,97 @@ async function embed(id: string, url: string): Promise<void> {
   const scaleToOriginal = origW / image.width;
 
   const inputs = await processor(image);
-  const { image_embeddings, image_positional_embeddings } = await model.get_image_embeddings(inputs);
+  let embeddings: any;
+  if (isSam2) {
+    embeddings = await model.get_image_embeddings(inputs);
+  } else {
+    const { image_embeddings, image_positional_embeddings } = await model.get_image_embeddings(inputs);
+    embeddings = { image_embeddings, image_positional_embeddings };
+  }
+
   session = {
     url,
     image,
     procScale,
     scaleToOriginal,
-    imageEmbeddings: image_embeddings,
-    imagePositionalEmbeddings: image_positional_embeddings,
+    embeddings,
     originalSizes: inputs.original_sizes,
     reshapedInputSizes: inputs.reshaped_input_sizes,
   };
 }
 
-// Decode the best mask for one foreground point (in PROCESSING coords). Returns
+// Decode the best mask for point prompts (in PROCESSING coords). Returns
 // the raw mask buffer + its IoU score, or null. Shared by interactive + auto.
-async function decodeAt(px: number, py: number): Promise<{ data: Uint8Array; width: number; height: number; score: number } | null> {
+async function decodeAt(
+  points: [number, number][],
+  labels: number[]
+): Promise<{ data: Uint8Array; width: number; height: number; score: number } | null> {
   if (!session) return null;
-  const promptInputs = await processor(session.image, { input_points: [[[px, py]]], input_labels: [[1]] });
-  const outputs = await model({
-    image_embeddings: session.imageEmbeddings,
-    image_positional_embeddings: session.imagePositionalEmbeddings,
-    input_points: promptInputs.input_points,
-    input_labels: promptInputs.input_labels,
-  });
-  const masks = await processor.post_process_masks(outputs.pred_masks, session.originalSizes, session.reshapedInputSizes);
+
+  let promptInputs: any;
+  let outputs: any;
+  let masks: any;
+
+  if (isSam2) {
+    promptInputs = await processor(session.image, {
+      input_points: [points],
+      input_labels: [labels]
+    });
+
+    const inputs = {
+      ...session.embeddings,
+      ...promptInputs
+    };
+    delete inputs.pixel_values;
+
+    outputs = await model(inputs);
+    masks = await processor.post_process_masks(
+      outputs.pred_masks,
+      session.originalSizes,
+      session.reshapedInputSizes
+    );
+  } else {
+    // SlimSAM path: take the first point (as it doesn't support multiple points easily in this layout)
+    const px = points[0][0];
+    const py = points[0][1];
+    promptInputs = await processor(session.image, { input_points: [[[px, py]]], input_labels: [[1]] });
+    outputs = await model({
+      image_embeddings: session.embeddings.image_embeddings,
+      image_positional_embeddings: session.embeddings.image_positional_embeddings,
+      input_points: promptInputs.input_points,
+      input_labels: promptInputs.input_labels,
+    });
+    masks = await processor.post_process_masks(outputs.pred_masks, session.originalSizes, session.reshapedInputSizes);
+  }
+
   const mt = masks[0];
   const nMasks = mt.dims[1], H = mt.dims[2], W = mt.dims[3];
   const scores = outputs.iou_scores.data as Float32Array;
+  
   let best = 0;
   for (let i = 1; i < nMasks; i++) if (scores[i] > scores[best]) best = i;
+  
   const md = mt.data as Uint8Array;
   const off = best * H * W;
   const out = new Uint8Array(H * W);
   for (let i = 0; i < H * W; i++) out[i] = md[off + i] ? 255 : 0;
+  
   return { data: out, width: W, height: H, score: scores[best] };
 }
 
-// Interactive: decode a mask for a single click (ORIGINAL image coords).
-async function segmentPoint(id: string, url: string, x: number, y: number): Promise<{ mask: ArrayBuffer; width: number; height: number; score: number; scale: number } | null> {
+// Interactive: decode a mask for clicks (ORIGINAL image coords).
+async function segmentPoint(
+  id: string,
+  url: string,
+  clicks: { x: number; y: number; label: number }[]
+): Promise<{ mask: ArrayBuffer; width: number; height: number; score: number; scale: number } | null> {
   await embed(id, url);
   if (!session) return null;
-  const r = await decodeAt(x * session.procScale, y * session.procScale);
+
+  const pts = clicks.map(c => [c.x * session!.procScale, c.y * session!.procScale] as [number, number]);
+  const labels = clicks.map(c => c.label);
+
+  const r = await decodeAt(pts, labels);
   if (!r) return null;
   return { mask: r.data.buffer as ArrayBuffer, width: r.width, height: r.height, score: r.score, scale: session.scaleToOriginal };
 }
@@ -220,7 +287,7 @@ async function autoSegment(id: string, url: string, points: { x: number; y: numb
   const W0 = session.image.width, H0 = session.image.height;
   const procArea = W0 * H0;
   const minArea = procArea * 0.0008;
-  const maxArea = procArea * 0.5;
+  const maxArea = procArea * 0.20; // Lowered from 0.5 to filter out large paper background masks
 
   type Cand = {
     data: Uint8Array;
@@ -235,7 +302,7 @@ async function autoSegment(id: string, url: string, points: { x: number; y: numb
 
   for (let i = 0; i < points.length; i++) {
     post({ id, type: 'progress', payload: { status: 'segment', progress: Math.round((i / points.length) * 100) } });
-    const r = await decodeAt(points[i].x * session.procScale, points[i].y * session.procScale);
+    const r = await decodeAt([[points[i].x * session.procScale, points[i].y * session.procScale]], [1]);
     if (!r || r.score < 0.7) continue;
     let area = 0;
     for (let p = 0; p < r.data.length; p++) if (r.data[p]) area++;
@@ -247,7 +314,7 @@ async function autoSegment(id: string, url: string, points: { x: number; y: numb
   const n = cands.length;
   if (n === 0) return { masks: [], scale: session.scaleToOriginal };
 
-  // Union-Find to group masks that overlap by at least 15% of the smaller mask's thumbnail area.
+  // Union-Find to group masks that overlap by at least 20% of the smaller mask's thumbnail area.
   // This merges sub-parts, overlapping frames/inserts, and split tool bodies (like jaw + body).
   const parent = new Int32Array(n);
   for (let i = 0; i < n; i++) parent[i] = i;
@@ -280,9 +347,40 @@ async function autoSegment(id: string, url: string, points: { x: number; y: numb
       for (let p = 0; p < 4096; p++) {
         if (cA.thumb[p] && cB.thumb[p]) inter++;
       }
-      // If the intersection is non-zero in the 64x64 thumbnail, they touch/overlap and belong to the same tool
-      if (inter > 0) {
+      
+      // If the intersection is at least 20% of the smaller mask's thumbnail area,
+      // group them as part of the same tool (e.g. caliper jaw + caliper body).
+      const minOverlap = Math.min(cA.thumbArea, cB.thumbArea) * 0.20;
+      if (inter > minOverlap) {
         union(i, j);
+        continue;
+      }
+
+      // Check containment with hole-filling (handles hollow frames & inserts)
+      const filledA = fillHoles64(cA.thumb);
+      let bInA = true;
+      for (let p = 0; p < 4096; p++) {
+        if (cB.thumb[p] && !filledA[p]) {
+          bInA = false;
+          break;
+        }
+      }
+      if (bInA) {
+        union(i, j);
+        continue;
+      }
+
+      const filledB = fillHoles64(cB.thumb);
+      let aInB = true;
+      for (let p = 0; p < 4096; p++) {
+        if (cA.thumb[p] && !filledB[p]) {
+          aInB = false;
+          break;
+        }
+      }
+      if (aInB) {
+        union(i, j);
+        continue;
       }
     }
   }
@@ -345,7 +443,8 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         result = { embedded: true };
         break;
       case 'segmentPoint': {
-        const r = await segmentPoint(id, payload.url, payload.x, payload.y);
+        const clicks = payload.clicks || [{ x: payload.x, y: payload.y, label: 1 }];
+        const r = await segmentPoint(id, payload.url, clicks);
         if (r) { post({ id, type: 'success', payload: r }, [r.mask]); return; }
         result = null;
         break;

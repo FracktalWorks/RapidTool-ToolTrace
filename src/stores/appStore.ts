@@ -4,7 +4,7 @@
 
 import { create } from 'zustand';
 import type { Point2D, PaperCorners, BoundingBox, ToolOutline } from '../lib/geometry';
-import { createOrientedPillShape, polygonArea, getBoundingBox } from '../lib/geometry';
+import { createOrientedPillShape, polygonArea, getBoundingBox, smoothContour } from '../lib/geometry';
 
 // Re-export types
 export type { Point2D, PaperCorners, BoundingBox, ToolOutline };
@@ -92,6 +92,7 @@ export interface AppState {
   addToolOutline: (outline: ToolOutline) => void;
   updateToolOutline: (id: string, points: Point2D[]) => void;
   updateToolOutlineSmoothed: (id: string, smoothedPoints: Point2D[]) => void;
+  updateToolOutlineRefined: (id: string, points: Point2D[], samClicks: { x: number; y: number; label: number }[]) => void;
   removeToolOutline: (id: string) => void;
   selectOutline: (id: string | null) => void;
   snapToPill: (id: string) => void;
@@ -319,6 +320,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     return {
       toolOutlines: state.toolOutlines.map((o) =>
         o.id === id ? { ...o, smoothedPoints, boundingBox, area, areaInMm2 } : o
+      ),
+    };
+  }),
+
+  updateToolOutlineRefined: (id, points, samClicks) => set((state) => {
+    const outline = state.toolOutlines.find(o => o.id === id);
+    if (!outline) return state;
+    
+    const smoothedPoints = smoothContour(points, 0.5, 2);
+    const boundingBox = getBoundingBox(smoothedPoints);
+    const area = polygonArea(points);
+    const areaInMm2 = state.pixelsPerMm ? area / (state.pixelsPerMm * state.pixelsPerMm) : undefined;
+    
+    return {
+      toolOutlines: state.toolOutlines.map((o) =>
+        o.id === id ? { ...o, points, smoothedPoints, boundingBox, area, areaInMm2, samClicks } : o
       ),
     };
   }),

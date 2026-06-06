@@ -770,6 +770,15 @@ function traceAllTools(imageData: ImageData, paperCorners?: PaperCorners): Trace
   // resolution-aware morphology, optional paper boundary).
   const mask = buildToolMask(src, paperCorners);
 
+  // Fill all internal holes and shadow loops before tracing final outer contours
+  const tempContours = new cv.MatVector();
+  const tempHierarchy = new cv.Mat();
+  cv.findContours(mask, tempContours, tempHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  for (let i = 0; i < tempContours.size(); i++) {
+    cv.drawContours(mask, tempContours, i, new cv.Scalar(255), -1);
+  }
+  deleteMats(tempContours, tempHierarchy);
+
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
   cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
@@ -948,6 +957,16 @@ function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): Prop
 
   // Classical tool mask → blobs + a coverage map.
   const mask = buildToolMask(src, paperCorners);
+
+  // Fill holes to stabilize moments/centroids and handle hollow shadow loops
+  const tempContours = new cv.MatVector();
+  const tempHierarchy = new cv.Mat();
+  cv.findContours(mask, tempContours, tempHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  for (let i = 0; i < tempContours.size(); i++) {
+    cv.drawContours(mask, tempContours, i, new cv.Scalar(255), -1);
+  }
+  deleteMats(tempContours, tempHierarchy);
+
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
   cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);

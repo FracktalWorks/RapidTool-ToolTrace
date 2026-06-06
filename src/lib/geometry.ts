@@ -21,6 +21,8 @@ export interface ToolOutline {
   name: string;
   /** 0..1 detection confidence — how tool-like the traced contour is. */
   confidence?: number;
+  /** Refinement clicks used to generate/refine this outline */
+  samClicks?: { x: number; y: number; label: number }[];
 }
 
 // Constants
@@ -215,7 +217,8 @@ const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#3b82f6'
 export const createToolOutline = (
   points: Point2D[],
   pixelsPerMm?: number,
-  confidence?: number
+  confidence?: number,
+  samClicks?: { x: number; y: number; label: number }[]
 ): ToolOutline => {
   const area = polygonArea(points);
   const processed = smoothContour(points, 0.5, 2);
@@ -230,6 +233,7 @@ export const createToolOutline = (
     color: COLORS[counter % COLORS.length],
     name: `Tool ${counter}`,
     confidence,
+    samClicks,
   };
 };
 
