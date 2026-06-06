@@ -514,22 +514,23 @@ const ToolsStepPanel: React.FC = () => {
         setAutoDetectDone(true);
       }
     } catch (error) {
-      console.error('AI detect failed:', error);
+      console.error('AI detect failed, falling back to classical auto-detect:', error);
+      runAutoDetect();
     } finally {
       setIsAiDetecting(false);
       setAiProgress(null);
     }
-  }, [imageUrl, isAiDetecting, pixelsPerMm, setToolOutlines, paperCorners]);
+  }, [imageUrl, isAiDetecting, pixelsPerMm, setToolOutlines, paperCorners, runAutoDetect]);
 
   const autoDetectRef = useRef<string | null>(null);
 
-  // Auto-run (classical) detection when step is first entered
+  // Auto-run AI detection when step is first entered (precisely segments all tools, including chrome)
   useEffect(() => {
     if (imageUrl && !autoDetectDone && toolOutlines.length === 0 && autoDetectRef.current !== imageUrl) {
       autoDetectRef.current = imageUrl;
-      runAutoDetect();
+      runAiDetect();
     }
-  }, [imageUrl, autoDetectDone, toolOutlines.length, runAutoDetect]);
+  }, [imageUrl, autoDetectDone, toolOutlines.length, runAiDetect]);
 
   return (
     <div className="h-full flex flex-col">
