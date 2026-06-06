@@ -305,6 +305,29 @@ function fillHoles64(thumb: Uint8Array): Uint8Array {
   return filled;
 }
 
+// Dilate a 64x64 binary thumbnail by 1 pixel (3x3 neighborhood) to check for adjacency
+function dilate64(thumb: Uint8Array): Uint8Array {
+  const dilated = new Uint8Array(64 * 64);
+  for (let y = 0; y < 64; y++) {
+    const yOff = y * 64;
+    for (let x = 0; x < 64; x++) {
+      if (thumb[yOff + x]) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= 64) continue;
+          const nyOff = ny * 64;
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= 64) continue;
+            dilated[nyOff + nx] = 1;
+          }
+        }
+      }
+    }
+  }
+  return dilated;
+}
+
 // Autonomous: decode every prompt, filter to tool-like masks, then drop
 // duplicates / sub-parts via containment-aware NMS. Returns survivor masks
 // (largest first) at processing resolution + the scale back to original.
@@ -380,6 +403,20 @@ async function autoSegment(id: string, url: string, points: { x: number; y: numb
       // group them as part of the same tool (e.g. caliper jaw + caliper body).
       const minOverlap = Math.min(cA.thumbArea, cB.thumbArea) * 0.20;
       if (inter > minOverlap) {
+        union(i, j);
+        continue;
+      }
+
+      // Check if they touch or are extremely close by intersecting their dilated versions.
+      const dilA = dilate64(cA.thumb);
+      const dilB = dilate64(cB.thumb);
+      let interDil = 0;
+      for (let p = 0; p < 4096; p++) {
+        if (dilA[p] && dilB[p]) interDil++;
+      }
+      // If dilated shapes intersect, it means they touch or sit within a 1-pixel gap.
+      // Group them together as part of the same tool.
+      if (interDil > 0) {
         union(i, j);
         continue;
       }
