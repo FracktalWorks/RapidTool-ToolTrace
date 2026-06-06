@@ -148,23 +148,25 @@ async function decodeAt(
     // Only add default negative points if the user has not placed any negative clicks
     const hasNegative = labels.includes(0);
     if (!hasNegative) {
+      // Always add 4 image corners as background points
+      const W = session.image.width;
+      const H = session.image.height;
+      const margin = 2;
+      finalPoints.push(
+        [margin, margin],
+        [W - 1 - margin, margin],
+        [W - 1 - margin, H - 1 - margin],
+        [margin, H - 1 - margin]
+      );
+      finalLabels.push(0, 0, 0, 0);
+
+      // Also add paper corners if available
       if (paperCorners) {
         const corners = [paperCorners.topLeft, paperCorners.topRight, paperCorners.bottomRight, paperCorners.bottomLeft];
         for (const c of corners) {
           finalPoints.push([c.x * session.procScale, c.y * session.procScale]);
           finalLabels.push(0);
         }
-      } else {
-        const W = session.image.width;
-        const H = session.image.height;
-        const margin = 2;
-        finalPoints.push(
-          [margin, margin],
-          [W - 1 - margin, margin],
-          [W - 1 - margin, H - 1 - margin],
-          [margin, H - 1 - margin]
-        );
-        finalLabels.push(0, 0, 0, 0);
       }
     }
 
@@ -336,9 +338,9 @@ async function autoSegment(id: string, url: string, points: { x: number; y: numb
   if (!session) return { masks: [], scale: 1 };
 
   const W0 = session.image.width, H0 = session.image.height;
-  const procArea = W0 * H0;
-  const minArea = procArea * 0.0008;
-  const maxArea = procArea * 0.20; // Lowered from 0.5 to filter out large paper background masks
+  const origArea = (W0 * session.scaleToOriginal) * (H0 * session.scaleToOriginal);
+  const minArea = origArea * 0.0008;
+  const maxArea = origArea * 0.20;
 
   type Cand = {
     data: Uint8Array;
@@ -355,6 +357,7 @@ async function autoSegment(id: string, url: string, points: { x: number; y: numb
     post({ id, type: 'progress', payload: { status: 'segment', progress: Math.round((i / points.length) * 100) } });
     const r = await decodeAt([[points[i].x * session.procScale, points[i].y * session.procScale]], [1], paperCorners);
     if (!r || r.score < 0.7) continue;
+
     let area = 0;
     for (let p = 0; p < r.data.length; p++) if (r.data[p]) area++;
     if (area < minArea || area > maxArea) continue;
