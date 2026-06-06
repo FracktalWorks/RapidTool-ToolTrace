@@ -588,7 +588,7 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
 
             let result = null;
             try {
-              result = await samSegmentPoint(imageUrl, currentClicks, setSamProgress);
+              result = await samSegmentPoint(imageUrl, currentClicks, setSamProgress, undefined, paperCorners || undefined);
             } catch (samErr) {
               console.warn('SAM refinement failed:', samErr);
             } finally {
@@ -605,7 +605,7 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
         const initialClicks = [{ x: point.x, y: point.y, label: 1 }];
         let result = null;
         try {
-          result = await samSegmentPoint(imageUrl, initialClicks, setSamProgress);
+          result = await samSegmentPoint(imageUrl, initialClicks, setSamProgress, undefined, paperCorners || undefined);
         } catch (samErr) {
           console.warn('SAM unavailable, falling back to classical trace:', samErr);
         } finally {

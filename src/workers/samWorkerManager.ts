@@ -82,6 +82,7 @@ export async function samSegmentPoint(
   clicksOrX: { x: number; y: number; label: number }[] | number,
   y?: number | ((p: SamLoadProgress) => void),
   onProgress?: (p: SamLoadProgress) => void,
+  paperCorners?: PaperCorners,
 ): Promise<ToolTracingResult | null> {
   let clicks: { x: number; y: number; label: number }[];
   let progressCb = onProgress;
@@ -98,7 +99,7 @@ export async function samSegmentPoint(
 
   const seg = await request<{ mask: ArrayBuffer; width: number; height: number; score: number; scale: number } | null>(
     'segmentPoint',
-    { url: imageUrl, clicks },
+    { url: imageUrl, clicks, paperCorners },
     progressCb,
   );
   everLoaded = true;
@@ -126,7 +127,7 @@ export async function samAutoSegment(
   // Stage 2+3 — SAM batch decode + filter + containment-NMS (in the worker).
   const res = await request<{ masks: { mask: ArrayBuffer; width: number; height: number; score: number }[]; scale: number }>(
     'autoSegment',
-    { url: imageUrl, points },
+    { url: imageUrl, points, paperCorners },
     onProgress,
   );
   everLoaded = true;

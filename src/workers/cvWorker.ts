@@ -947,6 +947,55 @@ function grabCutRefine(fgStrokes: Stroke[], bgStrokes: Stroke[], brushRadius: nu
 //     but smooth blank paper isn't. This targets chrome and skips empty paper.
 // ============================================================================
 
+// Generate a sparse grid inside the paper (or image) quad
+function generateSparseGrid(
+  paperCorners: PaperCorners | undefined,
+  rows: number,
+  cols: number,
+  imgWidth: number,
+  imgHeight: number
+): Point2D[] {
+  const points: Point2D[] = [];
+  
+  if (paperCorners) {
+    const { topLeft: tl, topRight: tr, bottomRight: br, bottomLeft: bl } = paperCorners;
+    const marginX = 0.08;
+    const marginY = 0.08;
+    
+    for (let r = 0; r < rows; r++) {
+      const v = marginY + (1 - 2 * marginY) * (r / (rows - 1));
+      const leftX = tl.x + (bl.x - tl.x) * v;
+      const leftY = tl.y + (bl.y - tl.y) * v;
+      const rightX = tr.x + (br.x - tr.x) * v;
+      const rightY = tr.y + (br.y - tr.y) * v;
+      
+      for (let c = 0; c < cols; c++) {
+        const u = marginX + (1 - 2 * marginX) * (c / (cols - 1));
+        points.push({
+          x: leftX + (rightX - leftX) * u,
+          y: leftY + (rightY - leftY) * u
+        });
+      }
+    }
+  } else {
+    // Generate inside image with 10% margin
+    const marginX = imgWidth * 0.1;
+    const marginY = imgHeight * 0.1;
+    const w = imgWidth - 2 * marginX;
+    const h = imgHeight - 2 * marginY;
+    
+    for (let r = 0; r < rows; r++) {
+      const y = marginY + h * (r / (rows - 1));
+      for (let c = 0; c < cols; c++) {
+        const x = marginX + w * (c / (cols - 1));
+        points.push({ x, y });
+      }
+    }
+  }
+  
+  return points;
+}
+
 interface ProposeResult { blobs: Point2D[]; grid: Point2D[] }
 
 function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): ProposeResult {
@@ -1031,11 +1080,24 @@ function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): Prop
     }
   }
 
+  // Generate a sparse grid of points inside the paper corners (or image if none)
+  // and append non-classically-covered points to the proposal list.
+  const sparseGrid = generateSparseGrid(paperCorners, 5, 6, cols, rows);
+  for (const pt of sparseGrid) {
+    const px = Math.round(pt.x);
+    const py = Math.round(pt.y);
+    if (px >= 0 && px < cols && py >= 0 && py < rows) {
+      if (coverage.data[py * cols + px] === 0) {
+        grid.push(pt);
+      }
+    }
+  }
+
   // Cleanup
   deleteMats(src, mask, contours, hierarchy, coverage, dk, gray, blurred, edges, notCoverage, dilateKernel, closeKernel, edgeContours, edgeHierarchy);
   if (interior) interior.delete();
 
-  console.log(`proposeRegions: ${blobs.length} blobs, ${grid.length} edge-guided prompts`);
+  console.log(`proposeRegions: ${blobs.length} blobs, ${grid.length} edge-guided/grid prompts`);
   return { blobs, grid };
 }
 
@@ -1065,6 +1127,15 @@ function contourFromMask(mask: Uint8Array, width: number, height: number): Trace
     const c = contours.get(i);
     const a = cv.contourArea(c);
     if (a > bestArea) { bestArea = a; best = c; }
+  }
+
+  // Reject the mask if it is too large (more than 25% of the total image area)
+  // as it is likely a background bleed
+  const maxArea = width * height * 0.25;
+  if (bestArea > maxArea) {
+    console.log(`contourFromMask: Rejecting contour with area ${Math.round(bestArea)} (exceeds 25% image area of ${Math.round(maxArea)})`);
+    deleteMats(m, kClose, kOpen, contours, hierarchy);
+    return null;
   }
 
   let result: TraceResult | null = null;

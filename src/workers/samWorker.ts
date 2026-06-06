@@ -132,7 +132,8 @@ async function embed(id: string, url: string): Promise<void> {
 // the raw mask buffer + its IoU score, or null. Shared by interactive + auto.
 async function decodeAt(
   points: [number, number][],
-  labels: number[]
+  labels: number[],
+  paperCorners?: any
 ): Promise<{ data: Uint8Array; width: number; height: number; score: number } | null> {
   if (!session) return null;
 
@@ -141,9 +142,35 @@ async function decodeAt(
   let masks: any;
 
   if (isSam2) {
+    const finalPoints = [...points];
+    const finalLabels = [...labels];
+
+    // Only add default negative points if the user has not placed any negative clicks
+    const hasNegative = labels.includes(0);
+    if (!hasNegative) {
+      if (paperCorners) {
+        const corners = [paperCorners.topLeft, paperCorners.topRight, paperCorners.bottomRight, paperCorners.bottomLeft];
+        for (const c of corners) {
+          finalPoints.push([c.x * session.procScale, c.y * session.procScale]);
+          finalLabels.push(0);
+        }
+      } else {
+        const W = session.image.width;
+        const H = session.image.height;
+        const margin = 2;
+        finalPoints.push(
+          [margin, margin],
+          [W - 1 - margin, margin],
+          [W - 1 - margin, H - 1 - margin],
+          [margin, H - 1 - margin]
+        );
+        finalLabels.push(0, 0, 0, 0);
+      }
+    }
+
     promptInputs = await processor(session.image, {
-      input_points: [points],
-      input_labels: [labels]
+      input_points: [finalPoints],
+      input_labels: [finalLabels]
     });
 
     const inputs = {
@@ -191,7 +218,8 @@ async function decodeAt(
 async function segmentPoint(
   id: string,
   url: string,
-  clicks: { x: number; y: number; label: number }[]
+  clicks: { x: number; y: number; label: number }[],
+  paperCorners?: any
 ): Promise<{ mask: ArrayBuffer; width: number; height: number; score: number; scale: number } | null> {
   await embed(id, url);
   if (!session) return null;
@@ -199,7 +227,7 @@ async function segmentPoint(
   const pts = clicks.map(c => [c.x * session!.procScale, c.y * session!.procScale] as [number, number]);
   const labels = clicks.map(c => c.label);
 
-  const r = await decodeAt(pts, labels);
+  const r = await decodeAt(pts, labels, paperCorners);
   if (!r) return null;
   return { mask: r.data.buffer as ArrayBuffer, width: r.width, height: r.height, score: r.score, scale: session.scaleToOriginal };
 }
@@ -280,7 +308,7 @@ function fillHoles64(thumb: Uint8Array): Uint8Array {
 // Autonomous: decode every prompt, filter to tool-like masks, then drop
 // duplicates / sub-parts via containment-aware NMS. Returns survivor masks
 // (largest first) at processing resolution + the scale back to original.
-async function autoSegment(id: string, url: string, points: { x: number; y: number }[]): Promise<{ masks: { mask: ArrayBuffer; width: number; height: number; score: number }[]; scale: number }> {
+async function autoSegment(id: string, url: string, points: { x: number; y: number }[], paperCorners?: any): Promise<{ masks: { mask: ArrayBuffer; width: number; height: number; score: number }[]; scale: number }> {
   await embed(id, url);
   if (!session) return { masks: [], scale: 1 };
 
@@ -302,7 +330,7 @@ async function autoSegment(id: string, url: string, points: { x: number; y: numb
 
   for (let i = 0; i < points.length; i++) {
     post({ id, type: 'progress', payload: { status: 'segment', progress: Math.round((i / points.length) * 100) } });
-    const r = await decodeAt([[points[i].x * session.procScale, points[i].y * session.procScale]], [1]);
+    const r = await decodeAt([[points[i].x * session.procScale, points[i].y * session.procScale]], [1], paperCorners);
     if (!r || r.score < 0.7) continue;
     let area = 0;
     for (let p = 0; p < r.data.length; p++) if (r.data[p]) area++;
@@ -444,13 +472,13 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         break;
       case 'segmentPoint': {
         const clicks = payload.clicks || [{ x: payload.x, y: payload.y, label: 1 }];
-        const r = await segmentPoint(id, payload.url, clicks);
+        const r = await segmentPoint(id, payload.url, clicks, payload.paperCorners);
         if (r) { post({ id, type: 'success', payload: r }, [r.mask]); return; }
         result = null;
         break;
       }
       case 'autoSegment': {
-        const r = await autoSegment(id, payload.url, payload.points);
+        const r = await autoSegment(id, payload.url, payload.points, payload.paperCorners);
         post({ id, type: 'success', payload: r }, r.masks.map((m) => m.mask));
         return;
       }
