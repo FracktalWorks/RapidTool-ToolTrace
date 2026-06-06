@@ -50,16 +50,18 @@ function createSolidShape(
 
   if (shape.type === 'tool' && shape.toolOutlineId && pixelsPerMm) {
     const outline = toolOutlines.find(o => o.id === shape.toolOutlineId);
-    if (!outline || outline.smoothedPoints.length < 3) return null;
+    if (!outline) return null;
+    const displayPoints = outline.regularizedPoints ?? outline.smoothedPoints;
+    if (displayPoints.length < 3) return null;
 
-    const { smoothedPoints, boundingBox } = outline;
+    const { boundingBox } = outline;
     const bboxWidth = boundingBox.maxX - boundingBox.minX;
     const bboxHeight = boundingBox.maxY - boundingBox.minY;
 
     const scaleX = shape.width / (bboxWidth / pixelsPerMm);
     const scaleY = shape.height / (bboxHeight / pixelsPerMm);
 
-    const points = smoothedPoints.map((p) => ({
+    const points = displayPoints.map((p) => ({
       x: centerX + ((p.x - boundingBox.minX) / pixelsPerMm) * scaleX - shape.width / 2,
       y: centerY - ((p.y - boundingBox.minY) / pixelsPerMm) * scaleY + shape.height / 2,
     }));

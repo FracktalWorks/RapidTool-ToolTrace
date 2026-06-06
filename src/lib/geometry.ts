@@ -4,6 +4,8 @@
  */
 
 import ClipperLib from 'clipper-lib';
+import { regularizeContour } from './contourRegularizer';
+import { matchToolTemplate } from './toolLibrary';
 
 // Types
 export interface Point2D { x: number; y: number }
@@ -14,6 +16,8 @@ export interface ToolOutline {
   id: string;
   points: Point2D[];
   smoothedPoints: Point2D[];
+  /** Geometrically regularized points — straight lines, clean arcs, enforced symmetry. */
+  regularizedPoints?: Point2D[];
   boundingBox: BoundingBox;
   area: number;
   areaInMm2?: number;
@@ -23,6 +27,10 @@ export interface ToolOutline {
   confidence?: number;
   /** Refinement clicks used to generate/refine this outline */
   samClicks?: { x: number; y: number; label: number }[];
+  /** Whether this outline was replaced by a perfect database CAD template */
+  templateMatched?: boolean;
+  /** The name of the matched template from the database */
+  templateName?: string;
 }
 
 // Constants
@@ -223,17 +231,54 @@ export const createToolOutline = (
   const area = polygonArea(points);
   const processed = smoothContour(points, 0.5, 2);
 
+  // 1. Try template matching first (gives perfect CAD outline)
+  let regularized: Point2D[] | undefined;
+  let templateMatched = false;
+  let templateName: string | undefined;
+
+  try {
+    const match = matchToolTemplate(processed, 0.82);
+    if (match) {
+      regularized = match.alignedPoints;
+      templateMatched = true;
+      templateName = match.name;
+    }
+  } catch (err) {
+    console.error('Template matching failed:', err);
+  }
+
+  // 2. Fall back to contour regularization if template matching didn't yield a match
+  if (!regularized) {
+    try {
+      regularized = regularizeContour(processed, {
+        lineThreshold: 2.0,
+        arcResidual: 5.0,
+        symmetryStrength: 0.6,
+      });
+      if (!regularized || regularized.length < 4) {
+        regularized = undefined;
+      }
+    } catch {
+      regularized = undefined;
+    }
+  }
+
+  const displayPoints = regularized ?? processed;
+
   return {
     id: `tool-${++counter}-${Date.now()}`,
     points,
     smoothedPoints: processed,
-    boundingBox: getBoundingBox(processed),
+    regularizedPoints: regularized,
+    boundingBox: getBoundingBox(displayPoints),
     area,
     areaInMm2: pixelsPerMm ? area / (pixelsPerMm * pixelsPerMm) : undefined,
     color: COLORS[counter % COLORS.length],
-    name: `Tool ${counter}`,
+    name: templateName ?? `Tool ${counter}`,
     confidence,
     samClicks,
+    templateMatched,
+    templateName,
   };
 };
 

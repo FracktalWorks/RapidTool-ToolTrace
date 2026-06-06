@@ -52,7 +52,8 @@ function generateToolShapePath(
   const outline = toolOutlines.find((o) => o.id === shape.toolOutlineId);
   if (!outline) return '';
   
-  const { smoothedPoints, boundingBox } = outline;
+  const displayPoints = outline.regularizedPoints ?? outline.smoothedPoints;
+  const { boundingBox } = outline;
   const bboxWidth = boundingBox.maxX - boundingBox.minX;
   const bboxHeight = boundingBox.maxY - boundingBox.minY;
   
@@ -61,7 +62,7 @@ function generateToolShapePath(
   const scaleY = shape.height / (bboxHeight / pixelsPerMm);
   
   // Translate points to shape position
-  const pathPoints = smoothedPoints.map((p) => ({
+  const pathPoints = displayPoints.map((p) => ({
     x: shape.x + ((p.x - boundingBox.minX) / pixelsPerMm) * scaleX,
     y: shape.y + ((p.y - boundingBox.minY) / pixelsPerMm) * scaleY,
   }));

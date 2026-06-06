@@ -98,7 +98,8 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
     if (editAnchors && editAnchors.id === selectedId) return; // already editing this one
     const outline = outlines.find(o => o.id === selectedId);
     if (outline) {
-      setEditAnchors({ id: selectedId, points: buildEditAnchors(outline.smoothedPoints) });
+      const displayPoints = outline.regularizedPoints ?? outline.smoothedPoints;
+      setEditAnchors({ id: selectedId, points: buildEditAnchors(displayPoints) });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTool, selectedId]);
@@ -255,11 +256,13 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
       {/* Render each outline */}
       {outlines.map((outline) => {
         const isSelected = outline.id === selectedId;
-        const path = contourToSVGPath(outline.smoothedPoints, true);
+        // Prefer regularized (CAD-quality) points when available
+        const displayPoints = outline.regularizedPoints ?? outline.smoothedPoints;
+        const path = contourToSVGPath(displayPoints, true);
         
         // Calculate offset path for clearance (using round joins for smooth result)
         const offsetPath = clearancePixels > 0
-          ? contourToSVGPath(offsetPolygon(outline.smoothedPoints, clearancePixels), true)
+          ? contourToSVGPath(offsetPolygon(displayPoints, clearancePixels), true)
           : null;
 
         return (

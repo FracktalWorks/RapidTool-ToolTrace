@@ -749,8 +749,14 @@ const ToolsStepPanel: React.FC = () => {
                     style={{ backgroundColor: outline.color }}
                   />
                   <div className="flex-1 min-w-0">
-                    <span className="text-[13px] font-medium truncate block">
+                    <span className="text-[13px] font-medium truncate flex items-center gap-1.5">
                       {outline.name}
+                      {outline.templateMatched && (
+                        <span className="inline-flex items-center text-[10px] text-[hsl(var(--success))] bg-[hsl(var(--success)/0.12)] px-1.5 py-0.5 rounded-full font-medium" title="Replaced with perfect database template">
+                          <Sparkles className="w-2.5 h-2.5 mr-0.5" />
+                          CAD
+                        </span>
+                      )}
                     </span>
                     <span className="flex items-center gap-1.5">
                       {outline.areaInMm2 && (
@@ -881,18 +887,21 @@ const ExportStepPanel: React.FC = () => {
 
     try {
       // Prepare outlines for export (apply clearance)
-      const outlinesToExport = toolOutlines.map((outline) => ({
-        id: outline.id,
-        name: outline.name,
-        points:
-          clearanceValue > 0
-            ? offsetPolygon(
-              outline.smoothedPoints,
-              clearanceValue * pixelsPerMm,
-            )
-            : outline.smoothedPoints,
-        color: outline.color,
-      }));
+      const outlinesToExport = toolOutlines.map((outline) => {
+        const basePoints = outline.regularizedPoints ?? outline.smoothedPoints;
+        return {
+          id: outline.id,
+          name: outline.name,
+          points:
+            clearanceValue > 0
+              ? offsetPolygon(
+                basePoints,
+                clearanceValue * pixelsPerMm,
+              )
+              : basePoints,
+          color: outline.color,
+        };
+      });
 
       if (exportFormat === "svg") {
         downloadSVG(outlinesToExport, pixelsPerMm, "tooltrace-export.svg");

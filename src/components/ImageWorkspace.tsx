@@ -15,7 +15,7 @@
 import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, RotateCcw, Move } from 'lucide-react';
 import { useAppStore } from '../stores';
-import type { Point2D } from '../stores';
+import type { Point2D, ToolOutline } from '../stores';
 import { DraggableCorners } from './DraggableCorners';
 import { TracingOverlay } from './TracingOverlay';
 import { calculatePixelsPerMm, createToolOutline, contourToSVGPath } from '../lib/geometry';
@@ -235,12 +235,7 @@ const PaperOverlay: React.FC<PaperOverlayProps> = ({ corners, zoom }) => {
 };
 
 interface ToolOutlinesOverlayProps {
-  outlines: Array<{
-    id: string;
-    smoothedPoints: Point2D[];
-    color: string;
-    name: string;
-  }>;
+  outlines: ToolOutline[];
   selectedId: string | null;
   zoom: number;
 }
@@ -254,20 +249,21 @@ const ToolOutlinesOverlay: React.FC<ToolOutlinesOverlayProps> = ({
     <g className="tool-outlines">
       {outlines.map((outline) => {
         const isSelected = outline.id === selectedId;
-        const pointsStr = outline.smoothedPoints.map((p) => `${p.x},${p.y}`).join(' ');
+        const displayPoints = outline.regularizedPoints ?? outline.smoothedPoints;
+        const pointsStr = displayPoints.map((p) => `${p.x},${p.y}`).join(' ');
 
         return (
           <g key={outline.id}>
             {/* Fill */}
             <path
-              d={contourToSVGPath(outline.smoothedPoints)}
+              d={contourToSVGPath(displayPoints)}
               fill={isSelected ? `${outline.color}30` : `${outline.color}15`}
               stroke="none"
               className="transition-all duration-300"
             />
             {/* Border */}
             <path
-              d={contourToSVGPath(outline.smoothedPoints)}
+              d={contourToSVGPath(displayPoints)}
               fill="none"
               stroke={outline.color}
               strokeWidth={Math.max((isSelected ? 3 : 2) / zoom, 1)}

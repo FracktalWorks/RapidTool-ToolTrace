@@ -45,16 +45,18 @@ function createSolidShape(
 
   if (shape.type === 'tool' && shape.toolOutlineId && pixelsPerMm) {
     const outline = toolOutlines.find(o => o.id === shape.toolOutlineId);
-    if (!outline || outline.smoothedPoints.length < 3) return null;
+    if (!outline) return null;
+    const displayPoints = outline.regularizedPoints ?? outline.smoothedPoints;
+    if (displayPoints.length < 3) return null;
 
-    const { smoothedPoints, boundingBox } = outline;
+    const { boundingBox } = outline;
     const bboxWidth = boundingBox.maxX - boundingBox.minX;
     const bboxHeight = boundingBox.maxY - boundingBox.minY;
 
     const scaleX = shape.width / (bboxWidth / pixelsPerMm);
     const scaleY = shape.height / (bboxHeight / pixelsPerMm);
 
-    const points = smoothedPoints.map((p) => ({
+    const points = displayPoints.map((p) => ({
       x: centerX + ((p.x - boundingBox.minX) / pixelsPerMm) * scaleX - shape.width / 2,
       y: centerY - ((p.y - boundingBox.minY) / pixelsPerMm) * scaleY + shape.height / 2,
     }));
@@ -637,21 +639,24 @@ const SVGPreview: React.FC<SVGPreviewProps> = ({ toolOutlines, layoutState, pixe
       
       if (shape.type === 'tool' && shape.toolOutlineId) {
         const outline = toolOutlines.find(o => o.id === shape.toolOutlineId);
-        if (outline && outline.smoothedPoints.length > 0) {
-          const { smoothedPoints, boundingBox } = outline;
-          const bboxWidth = boundingBox.maxX - boundingBox.minX;
-          const bboxHeight = boundingBox.maxY - boundingBox.minY;
-          
-          const scaleX = (shape.width / (bboxWidth / pixelsPerMm)) * displayScale;
-          const scaleY = (shape.height / (bboxHeight / pixelsPerMm)) * displayScale;
-          
-          path = smoothedPoints.map((p, i) => {
-            const x = shape.x * displayScale + ((p.x - boundingBox.minX) / pixelsPerMm) * scaleX;
-            const y = shape.y * displayScale + ((p.y - boundingBox.minY) / pixelsPerMm) * scaleY;
-            return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
-          }).join(' ') + ' Z';
-          
-          return { path, color: outline.color, name: shape.toolOutlineId };
+        if (outline) {
+          const displayPoints = outline.regularizedPoints ?? outline.smoothedPoints;
+          if (displayPoints.length > 0) {
+            const { boundingBox } = outline;
+            const bboxWidth = boundingBox.maxX - boundingBox.minX;
+            const bboxHeight = boundingBox.maxY - boundingBox.minY;
+            
+            const scaleX = (shape.width / (bboxWidth / pixelsPerMm)) * displayScale;
+            const scaleY = (shape.height / (bboxHeight / pixelsPerMm)) * displayScale;
+            
+            path = displayPoints.map((p, i) => {
+              const x = shape.x * displayScale + ((p.x - boundingBox.minX) / pixelsPerMm) * scaleX;
+              const y = shape.y * displayScale + ((p.y - boundingBox.minY) / pixelsPerMm) * scaleY;
+              return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
+            }).join(' ') + ' Z';
+            
+            return { path, color: outline.color, name: shape.toolOutlineId };
+          }
         }
       }
       
@@ -772,7 +777,7 @@ export const ExportWorkspace: React.FC = () => {
         const outlinesToExport = toolOutlines.map(outline => ({
           id: outline.id,
           name: outline.name,
-          points: outline.smoothedPoints,
+          points: outline.regularizedPoints ?? outline.smoothedPoints,
           color: outline.color,
         }));
         

@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import type { Point2D, PaperCorners, BoundingBox, ToolOutline } from '../lib/geometry';
 import { createOrientedPillShape, polygonArea, getBoundingBox, smoothContour } from '../lib/geometry';
+import { regularizeContour } from '../lib/contourRegularizer';
 
 // Re-export types
 export type { Point2D, PaperCorners, BoundingBox, ToolOutline };
@@ -313,13 +314,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     const outline = state.toolOutlines.find(o => o.id === id);
     if (!outline) return state;
     
-    const boundingBox = getBoundingBox(smoothedPoints);
-    const area = polygonArea(smoothedPoints);
+    let regularizedPoints: Point2D[] | undefined;
+    try {
+      regularizedPoints = regularizeContour(smoothedPoints, {
+        lineThreshold: 2.0,
+        arcResidual: 5.0,
+        symmetryStrength: 0.6,
+      });
+      if (!regularizedPoints || regularizedPoints.length < 4) {
+        regularizedPoints = undefined;
+      }
+    } catch {
+      regularizedPoints = undefined;
+    }
+    
+    const displayPoints = regularizedPoints ?? smoothedPoints;
+    const boundingBox = getBoundingBox(displayPoints);
+    const area = polygonArea(displayPoints);
     const areaInMm2 = state.pixelsPerMm ? area / (state.pixelsPerMm * state.pixelsPerMm) : undefined;
     
     return {
       toolOutlines: state.toolOutlines.map((o) =>
-        o.id === id ? { ...o, smoothedPoints, boundingBox, area, areaInMm2 } : o
+        o.id === id ? { ...o, smoothedPoints, regularizedPoints, boundingBox, area, areaInMm2 } : o
       ),
     };
   }),
@@ -329,13 +345,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!outline) return state;
     
     const smoothedPoints = smoothContour(points, 0.5, 2);
-    const boundingBox = getBoundingBox(smoothedPoints);
+    
+    let regularizedPoints: Point2D[] | undefined;
+    try {
+      regularizedPoints = regularizeContour(smoothedPoints, {
+        lineThreshold: 2.0,
+        arcResidual: 5.0,
+        symmetryStrength: 0.6,
+      });
+      if (!regularizedPoints || regularizedPoints.length < 4) {
+        regularizedPoints = undefined;
+      }
+    } catch {
+      regularizedPoints = undefined;
+    }
+    
+    const displayPoints = regularizedPoints ?? smoothedPoints;
+    const boundingBox = getBoundingBox(displayPoints);
     const area = polygonArea(points);
     const areaInMm2 = state.pixelsPerMm ? area / (state.pixelsPerMm * state.pixelsPerMm) : undefined;
     
     return {
       toolOutlines: state.toolOutlines.map((o) =>
-        o.id === id ? { ...o, points, smoothedPoints, boundingBox, area, areaInMm2, samClicks } : o
+        o.id === id ? { ...o, points, smoothedPoints, regularizedPoints, boundingBox, area, areaInMm2, samClicks } : o
       ),
     };
   }),
@@ -365,6 +397,7 @@ export const useAppStore = create<AppState>((set, get) => ({
               ...o, 
               points: pillPoints, 
               smoothedPoints: pillPoints, 
+              regularizedPoints: pillPoints,
               boundingBox: newBoundingBox, 
               area, 
               areaInMm2 
