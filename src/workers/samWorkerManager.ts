@@ -9,7 +9,7 @@
  * the HF CDN on first use and cached by the browser thereafter.
  */
 
-import type { ToolTracingResult, PaperCorners } from './cvWorkerManager';
+import type { ToolTracingResult, PaperCorners, ToolProposal } from './cvWorkerManager';
 import { contourFromMask, proposeRegions } from './cvWorkerManager';
 
 // Scale a contour (in processing-resolution space) back to original image space.
@@ -21,6 +21,17 @@ function scaleResult(r: ToolTracingResult | null, scale: number): ToolTracingRes
     points: r.points.map((p) => ({ x: p.x * scale, y: p.y * scale })),
     area: r.area * scale * scale,
   };
+}
+
+// Even-odd point-in-quad test (paper validity gate).
+function pointInQuad(px: number, py: number, c: PaperCorners): boolean {
+  const poly = [c.topLeft, c.topRight, c.bottomRight, c.bottomLeft];
+  let inside = false;
+  for (let i = 0, j = 3; i < 4; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+    if (((yi > py) !== (yj > py)) && (px < ((xj - xi) * (py - yi)) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
 }
 
 export interface SamLoadProgress {
@@ -40,7 +51,17 @@ function ensureWorker(): Worker {
     const { id, type, payload } = e.data;
     const p = pending.get(id);
     if (!p) return;
-    if (type === 'progress') { p.onProgress?.(payload); return; }
+    if (type === 'progress') {
+      // Log model identity confirmation to main-thread console
+      if (payload?.status === 'model_loaded') {
+        const style = payload.isSam2
+          ? 'color: #22c55e; font-weight: bold; font-size: 14px; background: #000; padding: 4px 8px; border-radius: 4px;'
+          : 'color: #f59e0b; font-weight: bold; font-size: 14px; background: #000; padding: 4px 8px; border-radius: 4px;';
+        console.log(`%c🤖 MODEL LOADED: ${payload.model} (${payload.device})`, style);
+      }
+      p.onProgress?.(payload);
+      return;
+    }
     pending.delete(id);
     if (type === 'error') p.reject(new Error(payload.message));
     else p.resolve(payload);
@@ -79,34 +100,34 @@ export async function samPreload(onProgress?: (p: SamLoadProgress) => void): Pro
  */
 export async function samSegmentPoint(
   imageUrl: string,
-  clicksOrX: { x: number; y: number; label: number }[] | number,
-  y?: number | ((p: SamLoadProgress) => void),
-  onProgress?: (p: SamLoadProgress) => void,
-  paperCorners?: PaperCorners,
+  clicks: { x: number; y: number; label: number }[],
+  opts?: { paperCorners?: PaperCorners; onProgress?: (p: SamLoadProgress) => void },
 ): Promise<ToolTracingResult | null> {
-  let clicks: { x: number; y: number; label: number }[];
-  let progressCb = onProgress;
-
-  if (Array.isArray(clicksOrX)) {
-    clicks = clicksOrX;
-    // When array is passed, onProgress is the 3rd argument (mapped to y)
-    if (typeof y === 'function') {
-      progressCb = y as any;
-    }
-  } else {
-    clicks = [{ x: clicksOrX, y: y as number, label: 1 }];
-  }
-
   const seg = await request<{ mask: ArrayBuffer; width: number; height: number; score: number; scale: number } | null>(
     'segmentPoint',
-    { url: imageUrl, clicks, paperCorners },
-    progressCb,
+    { url: imageUrl, clicks, paperCorners: opts?.paperCorners },
+    opts?.onProgress,
   );
   everLoaded = true;
-  if (!seg) return null;
-  // Hand the mask to OpenCV for the clean contour, then map back to original space.
+  if (!seg) return null; // worker rejected (paper-sized / noise) — no tool here
+
   const contour = await contourFromMask(seg.mask, seg.width, seg.height);
-  return scaleResult(contour, seg.scale);
+  const result = scaleResult(contour, seg.scale);
+  if (!result) return null;
+
+  // VALIDITY GATE (paper bounds): the tool must sit inside the A4 sheet. Reject
+  // detections whose centroid falls outside the paper quad (SAM leaked onto the
+  // dark background / off-sheet).
+  if (opts?.paperCorners && result.points.length) {
+    let cx = 0, cy = 0;
+    for (const p of result.points) { cx += p.x; cy += p.y; }
+    cx /= result.points.length; cy /= result.points.length;
+    if (!pointInQuad(cx, cy, opts.paperCorners)) {
+      console.log('[SAM] detection rejected — centroid outside paper');
+      return null;
+    }
+  }
+  return result;
 }
 
 /**
@@ -120,14 +141,13 @@ export async function samAutoSegment(
   onProgress?: (p: SamLoadProgress) => void,
 ): Promise<ToolTracingResult[]> {
   // Stage 1 — classical prompt proposal (instant, free).
-  const { blobs, grid } = await proposeRegions(imageUrl, paperCorners);
-  const points = [...blobs, ...grid];
-  if (points.length === 0) return [];
+  const proposals = await proposeRegions(imageUrl, paperCorners);
+  if (proposals.length === 0) return [];
 
-  // Stage 2+3 — SAM batch decode + filter + containment-NMS (in the worker).
+  // Stage 2+3 — SAM batch decode + filter (in the worker).
   const res = await request<{ masks: { mask: ArrayBuffer; width: number; height: number; score: number }[]; scale: number }>(
     'autoSegment',
-    { url: imageUrl, points, paperCorners },
+    { url: imageUrl, proposals, paperCorners },
     onProgress,
   );
   everLoaded = true;

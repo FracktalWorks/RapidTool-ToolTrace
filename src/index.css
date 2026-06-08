@@ -12,20 +12,28 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: 'Thuast';
+  src: url('/fonts/Thuast.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ============================================================================
    ToolTrace Design System - CSS Custom Properties
    Following THEME.md specifications
    ============================================================================ */
 
 :root {
-  /* Primary Colors — cad-ui Blue */
-  --primary: 217 91% 60%;
+  /* Primary Colors — cyan-blue (RapidTool Family) */
+  --primary: 198 89% 50%;
   --primary-foreground: 210 40% 98%;
 
   /* Secondary & Accent */
   --secondary: 210 40% 96%;
   --secondary-foreground: 222.2 84% 4.9%;
-  --accent: 266 85% 58%;
+  --accent: 27 96% 61%;
   --accent-foreground: 210 40% 98%;
 
   /* Border Radius */
@@ -42,7 +50,7 @@
   --muted-foreground: 215.4 16.3% 46.9%;
   --border: 214.3 31.8% 91.4%;
   --input: 214.3 31.8% 91.4%;
-  --ring: 217 91% 60%;
+  --ring: 198 89% 50%;
 
   /* Status Colors */
   --success: 142 76% 47%;
@@ -56,14 +64,16 @@
   /* Workspace */
   --workspace-bg: 220 14% 96%;
 
-  /* Design Tokens */
-  --gradient-primary: linear-gradient(135deg, hsl(217, 91%, 60%), hsl(217, 91%, 48%));
-  --gradient-accent: linear-gradient(135deg, hsl(266, 85%, 58%), hsl(266, 85%, 45%));
-  --gradient-brand: linear-gradient(135deg, hsl(217, 91%, 60%), hsl(266, 85%, 58%));
-  --gradient-glass: linear-gradient(135deg, hsl(0 0% 100% / 0.08), hsl(0 0% 100% / 0.02));
-  --gradient-tech: linear-gradient(180deg, hsl(217 91% 60% / 0.04) 0%, transparent 100%);
-  --shadow-btn: 0 4px 12px rgba(59, 130, 246, 0.3), 0 2px 4px rgba(0, 0, 0, 0.05);
-  --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.15), 0 0 40px rgba(59, 130, 246, 0.05);
+  /* Design Tokens - Aligned with RapidTool Family */
+  --gradient-primary: linear-gradient(135deg, hsl(198, 89%, 50%), hsl(198, 89%, 38%));
+  --gradient-accent: linear-gradient(135deg, hsl(27, 96%, 61%), hsl(27, 96%, 48%));
+  --gradient-brand: linear-gradient(135deg, hsl(198, 89%, 50%), hsl(27, 96%, 61%));
+  --gradient-mesh: linear-gradient(135deg, hsl(210 40% 98%), hsl(214.3 31.8% 91.4%));
+  --gradient-tech: linear-gradient(135deg, hsl(198 89% 50% / 0.05), hsl(27 96% 61% / 0.05));
+  --gradient-glass: linear-gradient(135deg, hsl(0 0% 100% / 0.8), hsl(0 0% 100% / 0.4));
+  --shadow-btn: 0 4px 12px rgba(14, 165, 233, 0.3), 0 2px 4px rgba(0, 0, 0, 0.05);
+  --shadow-glow: 0 0 24px hsl(198 89% 50% / 0.15);
+  --shadow-tech: 0 8px 32px hsl(198 89% 50% / 0.08);
   --shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.04);
   --transition-tech: 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
@@ -73,15 +83,23 @@
   --foreground: 210 40% 98%;
   --card: 220 13% 10%;
   --card-foreground: 210 40% 98%;
-  --popover: 220 13% 10%;
+  --popover: 220 13% 12%;
   --popover-foreground: 210 40% 98%;
   --muted: 220 13% 16%;
   --muted-foreground: 215 20.2% 65.1%;
   --border: 220 13% 18%;
-  --input: 220 13% 18%;
+  --input: 220 13% 16%;
+  --ring: 198 89% 50%;
   --viewer-bg: 220 13% 6%;
   --grid-lines: 220 13% 20%;
   --workspace-bg: 220 13% 6%;
+  
+  --gradient-mesh: linear-gradient(135deg, hsl(220 13% 10%), hsl(220 13% 8%));
+  --gradient-tech: linear-gradient(135deg, hsl(198 89% 50% / 0.1), hsl(27 96% 61% / 0.1));
+  --gradient-glass: linear-gradient(135deg, hsl(210 40% 98% / 0.05), hsl(210 40% 98% / 0.02));
+  --shadow-soft: 0 4px 12px hsl(220 13% 4% / 0.3);
+  --shadow-tech: 0 8px 32px hsl(198 89% 50% / 0.1);
+  --shadow-glow: 0 0 24px hsl(198 89% 50% / 0.2);
 }
 
 /* ============================================================================
@@ -114,7 +132,7 @@ body {
 
 /* Brand/Display font */
 .font-brand {
-  font-family: 'Reality Hyper', system-ui, sans-serif;
+  font-family: 'Thuast', system-ui, sans-serif;
 }
 
 /* ============================================================================

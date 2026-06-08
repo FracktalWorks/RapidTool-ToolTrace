@@ -39,51 +39,52 @@ const DefaultIcon: React.FC<{ size: number }> = ({ size }) => (
 
 export const RapidToolLogo: React.FC<RapidToolLogoProps> = ({
   productName = 'ToolTrace',
-  iconSize = 20,
+  iconSize = 16,
   iconOnly = false,
-  className,
+  className = '',
   icon,
-}) => (
-  <div
-    className={className}
-    style={{ display: 'flex', alignItems: 'center', gap: '10px' }}
-  >
-    {/* Icon badge */}
-    <div
-      style={{
-        width: iconSize + 16,
-        height: iconSize + 16,
-        borderRadius: '10px',
-        background: 'var(--gradient-brand, linear-gradient(135deg, hsl(217,91%,60%), hsl(266,85%,58%)))',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: 'white',
-        flexShrink: 0,
-        boxShadow: '0 2px 8px rgba(59,130,246,0.3)',
-      }}
-    >
-      {icon ?? <DefaultIcon size={iconSize} />}
+}) => {
+  return (
+    <div className={`flex flex-col gap-0.5 leading-none ${className}`}>
+      {/* Main logo row: RapidTool + Icon */}
+      <div className="flex items-center gap-1">
+        <div 
+          className="text-lg tracking-tight font-semibold"
+          style={{ fontFamily: "'Thuast', system-ui, sans-serif" }}
+        >
+          <span className="text-[hsl(var(--foreground))]">Rapid</span>
+          <span className="text-[hsl(var(--primary))]">Tool</span>
+        </div>
+        
+        {/* Render icon next to text - defaults to Zap in amber */}
+        <div className="flex items-center justify-center flex-shrink-0 text-amber-500 fill-amber-500">
+          {icon ?? (
+            <svg
+              width={iconSize}
+              height={iconSize}
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+          )}
+        </div>
+      </div>
+      
+      {/* Subscript - aligned with start */}
+      {!iconOnly && productName && (
+        <span 
+          className="font-tech text-[9px] text-[hsl(var(--muted-foreground))] tracking-widest uppercase"
+        >
+          {productName}
+        </span>
+      )}
     </div>
-
-    {/* Product name */}
-    {!iconOnly && (
-      <span
-        className="font-brand"
-        style={{
-          fontSize: '1.2rem',
-          fontWeight: 600,
-          letterSpacing: '-0.02em',
-          background: 'var(--gradient-brand, linear-gradient(135deg, hsl(217,91%,60%), hsl(266,85%,58%)))',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-          backgroundClip: 'text',
-        }}
-      >
-        {productName}
-      </span>
-    )}
-  </div>
-);
+  );
+};
 
 export default RapidToolLogo;

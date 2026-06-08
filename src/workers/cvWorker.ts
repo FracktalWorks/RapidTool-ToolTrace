@@ -427,10 +427,10 @@ function detectWhitePaper(src: any, totalArea: number): { points: Point2D[]; con
   cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, closeKernel);
   cv.morphologyEx(mask, mask, cv.MORPH_OPEN, openKernel);
 
-  // EXTRA STEP: Zero out the extreme edges (3% margin) of the mask.
+  // EXTRA STEP: Zero out the extreme edges (1% margin) of the mask.
   // This prevents the TR corner from 'sticking' to background noise at the image boundary.
-  const borderW = Math.round(mask.cols * 0.03);
-  const borderH = Math.round(mask.rows * 0.03);
+  const borderW = Math.round(mask.cols * 0.01);
+  const borderH = Math.round(mask.rows * 0.01);
 
   // Clear the 4 border strips
   cv.rectangle(mask, new cv.Point(0, 0), new cv.Point(mask.cols, borderH), new cv.Scalar(0), -1); // Top
@@ -740,8 +740,8 @@ function extractContourPoints(
 ): TraceResult {
   const peri = cv.arcLength(contour, true);
 
-  // Very tight epsilon for highly accurate tool shape preservation.
-  const epsilon = 0.0005 * peri;
+  // Slightly looser epsilon to smooth out pixelation noise and straighten edges (floor of 1.0px)
+  const epsilon = Math.max(1.0, 0.0012 * peri);
 
   const approx = new cv.Mat();
   cv.approxPolyDP(contour, approx, epsilon, true);
@@ -936,184 +936,314 @@ function grabCutRefine(fgStrokes: Stroke[], bgStrokes: Stroke[], brushRadius: nu
 }
 
 // ============================================================================
-// Stage 1 (autonomous) — propose SAM prompts.
+// ============================================================================
+// Multi-Point Tool Proposal Generation
 //
-// Returns two prompt sets that together locate every tool while spending as few
-// SAM decodes as possible:
-//   • blobs: centroids of the classical tool mask (coloured/dark tools located
-//     instantly and reliably — SAM will turn each into a precise mask)
-//   • grid:  a SPARSE point grid placed ONLY where (a) classical found nothing
-//     AND (b) there is local texture — i.e. the bright metal classical can't see
-//     but smooth blank paper isn't. This targets chrome and skips empty paper.
+// Instead of returning flat point arrays (which caused 38 blind decoder passes
+// and Union-Find merge chaos), we now return structured ToolProposal objects:
+//   • One proposal per candidate tool region (classical blob OR edge cluster)
+//   • Each proposal carries 5-7 positive points along the tool's principal axis
+//   • Plus 4 negative points just outside the bounding box
+//   • SAM decodes each proposal in a SINGLE pass — no merging needed
 // ============================================================================
 
-// Generate a sparse grid inside the paper (or image) quad
-function generateSparseGrid(
-  paperCorners: PaperCorners | undefined,
-  rows: number,
-  cols: number,
-  imgWidth: number,
-  imgHeight: number
-): Point2D[] {
-  const points: Point2D[] = [];
-  
-  if (paperCorners) {
-    const { topLeft: tl, topRight: tr, bottomRight: br, bottomLeft: bl } = paperCorners;
-    const marginX = 0.08;
-    const marginY = 0.08;
-    
-    for (let r = 0; r < rows; r++) {
-      const v = marginY + (1 - 2 * marginY) * (r / (rows - 1));
-      const leftX = tl.x + (bl.x - tl.x) * v;
-      const leftY = tl.y + (bl.y - tl.y) * v;
-      const rightX = tr.x + (br.x - tr.x) * v;
-      const rightY = tr.y + (br.y - tr.y) * v;
-      
-      for (let c = 0; c < cols; c++) {
-        const u = marginX + (1 - 2 * marginX) * (c / (cols - 1));
-        points.push({
-          x: leftX + (rightX - leftX) * u,
-          y: leftY + (rightY - leftY) * u
-        });
-      }
-    }
+interface ToolProposal {
+  positivePoints: Point2D[];  // 5-7 points sampled along the principal axis, inside the contour
+  negativePoints: Point2D[];  // 4 points just outside the bounding box (background cues)
+  bbox: { x: number; y: number; w: number; h: number };
+  sourceArea: number;         // classical contour area for filtering/sorting
+}
+
+/**
+ * Convert a contour into a structured ToolProposal with multi-point prompts.
+ *
+ * Uses moment-based PCA to find the principal axis of inertia, then samples
+ * positive points along that axis. Points are validated against a filled mask
+ * to ensure they actually fall inside the tool silhouette.
+ */
+function buildProposalFromContour(
+  contour: any,
+  area: number,
+  imgRows: number,
+  imgCols: number,
+  filledMask: any
+): ToolProposal | null {
+  const rect = cv.boundingRect(contour);
+  const bbox = { x: rect.x, y: rect.y, w: rect.width, h: rect.height };
+
+  // Oriented bounding box via minAreaRect to find true geometric center & axis
+  const rotatedRect = cv.minAreaRect(contour);
+  const cx = rotatedRect.center.x;
+  const cy = rotatedRect.center.y;
+
+  // Verify dimensions
+  if (rotatedRect.size.width <= 0 || rotatedRect.size.height <= 0) return null;
+
+  // Check if a point is inside the contour polygon (100% robust against internal holes/reflections)
+  function isInside(x: number, y: number): boolean {
+    const px = Math.round(x);
+    const py = Math.round(y);
+    if (px < 0 || px >= imgCols || py < 0 || py >= imgRows) return false;
+    return cv.pointPolygonTest(contour, new cv.Point(px, py), false) >= 0;
+  }
+
+  // Determine oriented longitudinal axis
+  let angle = rotatedRect.angle * Math.PI / 180;
+  let halfLen = 0;
+  if (rotatedRect.size.width > rotatedRect.size.height) {
+    halfLen = rotatedRect.size.width * 0.42;
   } else {
-    // Generate inside image with 10% margin
-    const marginX = imgWidth * 0.1;
-    const marginY = imgHeight * 0.1;
-    const w = imgWidth - 2 * marginX;
-    const h = imgHeight - 2 * marginY;
-    
-    for (let r = 0; r < rows; r++) {
-      const y = marginY + h * (r / (rows - 1));
-      for (let c = 0; c < cols; c++) {
-        const x = marginX + w * (c / (cols - 1));
-        points.push({ x, y });
+    halfLen = rotatedRect.size.height * 0.42;
+    angle += Math.PI / 2;
+  }
+
+  // Sample 7 positive points along the oriented axis
+  const positivePoints: Point2D[] = [];
+  const numSamples = 7;
+  for (let s = 0; s < numSamples; s++) {
+    const t = -0.85 + (1.7 * s / (numSamples - 1)); // -0.85 to +0.85 along axis
+    const px = cx + t * halfLen * Math.cos(angle);
+    const py = cy + t * halfLen * Math.sin(angle);
+    if (isInside(px, py)) {
+      positivePoints.push({ x: px, y: py });
+    }
+  }
+
+  // Always include geometric center if it's inside and not already captured
+  const hasCentroid = positivePoints.some(
+    p => Math.abs(p.x - cx) < 3 && Math.abs(p.y - cy) < 3
+  );
+  if (!hasCentroid && isInside(cx, cy)) {
+    positivePoints.unshift({ x: cx, y: cy });
+  }
+
+  // If still empty, fallback to geometric center
+  if (positivePoints.length === 0) {
+    positivePoints.push({ x: cx, y: cy });
+  }
+
+  // Sample along minor axis (perpendicular) for wider tools
+  const minorLen = Math.min(rotatedRect.size.width, rotatedRect.size.height);
+  if (positivePoints.length < 5 && minorLen > 25) {
+    const minorAngle = angle + Math.PI / 2;
+    const minorHalfLen = minorLen * 0.3;
+    for (const t of [-0.5, 0.5]) {
+      const px = cx + t * minorHalfLen * Math.cos(minorAngle);
+      const py = cy + t * minorHalfLen * Math.sin(minorAngle);
+      if (isInside(px, py)) {
+        positivePoints.push({ x: px, y: py });
       }
     }
   }
-  
-  return points;
+
+  // Negative points: midpoints of each bbox side, pushed outward by margin
+  const margin = Math.max(30, Math.min(rect.width, rect.height) * 0.25);
+  const negativePoints: Point2D[] = [
+    // Bottom center
+    { x: cx, y: Math.min(imgRows - 1, rect.y + rect.height + margin) },
+    // Left center
+    { x: Math.max(0, rect.x - margin), y: cy },
+    // Right center
+    { x: Math.min(imgCols - 1, rect.x + rect.width + margin), y: cy },
+    // Top center
+    { x: cx, y: Math.max(0, rect.y - margin) },
+  ];
+
+  return { positivePoints, negativePoints, bbox, sourceArea: area };
 }
 
-interface ProposeResult { blobs: Point2D[]; grid: Point2D[] }
-
-function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): ProposeResult {
+function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): ToolProposal[] {
   const src = cv.matFromImageData(imageData);
   const rows = src.rows, cols = src.cols;
   const totalArea = rows * cols;
   const minArea = Math.max(1000, totalArea * 0.0005);
 
-  // Classical tool mask → blobs + a coverage map.
-  const mask = buildToolMask(src, paperCorners);
+  // 1. Classical tool detection mask
+  const classicalMask = buildToolMask(src, paperCorners);
 
-  // Fill holes to stabilize moments/centroids and handle hollow shadow loops
+  // Fill holes in classical mask to make it solid
   const tempContours = new cv.MatVector();
   const tempHierarchy = new cv.Mat();
-  cv.findContours(mask, tempContours, tempHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  cv.findContours(classicalMask, tempContours, tempHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
   for (let i = 0; i < tempContours.size(); i++) {
-    cv.drawContours(mask, tempContours, i, new cv.Scalar(255), -1);
+    cv.drawContours(classicalMask, tempContours, i, new cv.Scalar(255), -1);
   }
   deleteMats(tempContours, tempHierarchy);
 
-  const contours = new cv.MatVector();
-  const hierarchy = new cv.Mat();
-  cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-  const coverage = cv.Mat.zeros(rows, cols, cv.CV_8U);
-  const blobs: Point2D[] = [];
-  for (let i = 0; i < contours.size(); i++) {
-    const c = contours.get(i);
-    const area = cv.contourArea(c);
-    if (area < minArea || area > totalArea * 0.6) continue;
-    if (calculateSolidity(c) < 0.25) continue;
-    const m = cv.moments(c);
-    if (m.m00 <= 0) continue;
-    blobs.push({ x: m.m10 / m.m00, y: m.m01 / m.m00 });
-    cv.drawContours(coverage, contours, i, new cv.Scalar(255), -1);
-  }
-  // Grow coverage so the grid doesn't re-prompt right next to a located tool.
-  const dk = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(15, 15));
-  cv.dilate(coverage, coverage, dk);
-
+  // 2. Edge-detected chrome mask
   const gray = new cv.Mat();
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-
-  // Bilateral filtering to preserve edges while removing paper texture/noise
   const blurred = new cv.Mat();
   cv.bilateralFilter(gray, blurred, 9, 75, 75);
-
-  // Auto-tuned Canny edge detection
   const edges = autoTunedCanny(blurred);
 
-  // Restrict edges to paper interior
+  // Restrict edges to paper interior if corners are known
   const interior = paperCorners ? paperInteriorMask(paperCorners, rows, cols) : null;
   if (interior) {
     cv.bitwise_and(edges, interior, edges);
   }
 
-  // Subtract coverage (areas already covered by classical detection)
-  const notCoverage = new cv.Mat();
-  cv.bitwise_not(coverage, notCoverage);
-  cv.bitwise_and(edges, notCoverage, edges);
-
-  // Connect isolated edges of chrome tools into solid components using dilation and closing
+  // 3. Connect chrome edge fragments
   const dilateKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(9, 9));
   cv.dilate(edges, edges, dilateKernel);
   const closeKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(15, 15));
   cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, closeKernel);
 
-  // Find contours of the remaining uncovered edge blobs (chrome tools)
-  const edgeContours = new cv.MatVector();
-  const edgeHierarchy = new cv.Mat();
-  cv.findContours(edges, edgeContours, edgeHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  // 4. Morphologically merge classical and edge detections
+  const combined = new cv.Mat();
+  cv.bitwise_or(classicalMask, edges, combined);
 
-  const grid: Point2D[] = [];
-  for (let i = 0; i < edgeContours.size(); i++) {
-    const c = edgeContours.get(i);
+  // Reduce morphological close size to prevent merging parallel adjacent tools (clamped between 15 and 35)
+  const closeSize = Math.max(15, Math.min(35, Math.round(cols * 0.01))); // 1% of width
+  const kCloseSize = closeSize % 2 === 0 ? closeSize + 1 : closeSize;
+  const morphClose = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(kCloseSize, kCloseSize));
+  cv.morphologyEx(combined, combined, cv.MORPH_CLOSE, morphClose);
+
+  const openSize = Math.max(11, Math.round(cols * 0.008)); // 0.8% of width
+  const kOpenSize = openSize % 2 === 0 ? openSize + 1 : openSize;
+  const morphOpen = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(kOpenSize, kOpenSize));
+  cv.morphologyEx(combined, combined, cv.MORPH_OPEN, morphOpen);
+
+  // Connect collinear contours that are close to each other (e.g. black flange and blue body separated by silver cylinder)
+  const collinearContours = new cv.MatVector();
+  const collinearHierarchy = new cv.Mat();
+  cv.findContours(combined, collinearContours, collinearHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  const validCands: { cx: number; cy: number; rect: any }[] = [];
+  for (let i = 0; i < collinearContours.size(); i++) {
+    const c = collinearContours.get(i);
     const area = cv.contourArea(c);
-    // Ignore small noise, only prompt on components with meaningful shape area
-    if (area < 400) continue;
-    const m = cv.moments(c);
-    if (m.m00 > 0) {
-      grid.push({ x: m.m10 / m.m00, y: m.m01 / m.m00 });
+    if (area > 300) {
+      const rect = cv.boundingRect(c);
+      validCands.push({
+        cx: Math.round(rect.x + rect.width / 2),
+        cy: Math.round(rect.y + rect.height / 2),
+        rect
+      });
     }
   }
 
-  // Generate a sparse grid of points inside the paper corners (or image if none)
-  // and append non-classically-covered points to the proposal list.
-  const sparseGrid = generateSparseGrid(paperCorners, 5, 6, cols, rows);
-  for (const pt of sparseGrid) {
-    const px = Math.round(pt.x);
-    const py = Math.round(pt.y);
-    if (px >= 0 && px < cols && py >= 0 && py < rows) {
-      if (coverage.data[py * cols + px] === 0) {
-        grid.push(pt);
+  for (let i = 0; i < validCands.length; i++) {
+    for (let j = i + 1; j < validCands.length; j++) {
+      const c1 = validCands[i];
+      const c2 = validCands[j];
+      const r1 = c1.rect;
+      const r2 = c2.rect;
+
+      // Check horizontal alignment and gap
+      const yOverlap = Math.max(r1.y, r2.y) < Math.min(r1.y + r1.height, r2.y + r2.height);
+      let hGap = Infinity;
+      if (r1.x + r1.width < r2.x) {
+        hGap = r2.x - (r1.x + r1.width);
+      } else if (r2.x + r2.width < r1.x) {
+        hGap = r1.x - (r2.x + r2.width);
+      } else {
+        hGap = 0;
       }
+
+      // Check vertical alignment and gap
+      const xOverlap = Math.max(r1.x, r2.x) < Math.min(r1.x + r1.width, r2.x + r2.width);
+      let vGap = Infinity;
+      if (r1.y + r1.height < r2.y) {
+        vGap = r2.y - (r1.y + r1.height);
+      } else if (r2.y + r2.height < r1.y) {
+        vGap = r1.y - (r2.y + r2.height);
+      } else {
+        vGap = 0;
+      }
+
+      let shouldConnect = false;
+      let thick = 20;
+
+      // Strict alignment checks to prevent merging parallel adjacent tools (e.g. caliper and dial indicator)
+      // or giant hand shadows to small tools.
+      const heightRatio = Math.max(r1.height, r2.height) / Math.min(r1.height, r2.height);
+      const widthRatio = Math.max(r1.width, r2.width) / Math.min(r1.width, r2.width);
+
+      if (yOverlap && hGap < cols * 0.18 && heightRatio < 3.5) {
+        // Horizontal connection: centers must align vertically, and not both vertically elongated
+        const cyOffset = Math.abs(c1.cy - c2.cy);
+        const maxOffset = Math.min(r1.height, r2.height) * 0.6;
+        const bothVertElongated = r1.height > r1.width * 1.3 && r2.height > r2.width * 1.3;
+        if (cyOffset < maxOffset && !bothVertElongated) {
+          shouldConnect = true;
+          thick = Math.min(r1.height, r2.height, 50);
+        }
+      } else if (xOverlap && vGap < rows * 0.18 && widthRatio < 3.5) {
+        // Vertical connection: centers must align horizontally, and not both horizontally elongated
+        const cxOffset = Math.abs(c1.cx - c2.cx);
+        const maxOffset = Math.min(r1.width, r2.width) * 0.6;
+        const bothHorizElongated = r1.width > r1.height * 1.3 && r2.width > r2.height * 1.3;
+        if (cxOffset < maxOffset && !bothHorizElongated) {
+          shouldConnect = true;
+          thick = Math.min(r1.width, r2.width, 50);
+        }
+      }
+
+      if (shouldConnect) {
+        const p1 = new cv.Point(c1.cx, c1.cy);
+        const p2 = new cv.Point(c2.cx, c2.cy);
+        cv.line(combined, p1, p2, new cv.Scalar(255), Math.max(10, Math.round(thick * 0.8)));
+      }
+    }
+  }
+  deleteMats(collinearContours, collinearHierarchy);
+
+
+
+  // 5. Find contours of unified tool regions
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
+  cv.findContours(combined, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  const proposals: ToolProposal[] = [];
+
+  for (let i = 0; i < contours.size(); i++) {
+    const c = contours.get(i);
+    const area = cv.contourArea(c);
+    
+    // Reject noise (too small) and paper background (too large)
+    if (area < minArea || area > totalArea * 0.6) continue;
+    
+    // Solidity check to filter out long thin lines, wires, or scribbles
+    if (calculateSolidity(c) < 0.20) continue;
+
+    const proposal = buildProposalFromContour(c, area, rows, cols, combined);
+    if (proposal) {
+      proposals.push(proposal);
     }
   }
 
   // Cleanup
-  deleteMats(src, mask, contours, hierarchy, coverage, dk, gray, blurred, edges, notCoverage, dilateKernel, closeKernel, edgeContours, edgeHierarchy);
+  deleteMats(src, classicalMask, gray, blurred, edges, dilateKernel, closeKernel, combined, morphClose, morphOpen, contours, hierarchy);
   if (interior) interior.delete();
 
-  console.log(`proposeRegions: ${blobs.length} blobs, ${grid.length} edge-guided/grid prompts`);
-  return { blobs, grid };
+  console.log(`proposeRegions: found ${proposals.length} unified proposals`);
+  for (let i = 0; i < proposals.length; i++) {
+    const p = proposals[i];
+    console.log(`  Proposal ${i}: bbox=[x=${p.bbox.x}, y=${p.bbox.y}, w=${p.bbox.w}, h=${p.bbox.h}], positives=${p.positivePoints.length}, negatives=${p.negativePoints.length}`);
+  }
+  return proposals;
 }
 
 // ============================================================================
-// Contour from an external binary mask (e.g. a SAM segmentation)
-// Reuses the tested OpenCV contour + RDP + confidence path so AI masks flow
-// into the exact same geometry pipeline as classical detection.
+// Contour generation from mask
 // ============================================================================
 
 function contourFromMask(mask: Uint8Array, width: number, height: number): TraceResult | null {
   const m = new cv.Mat(height, width, cv.CV_8UC1);
   m.data.set(mask);
 
-  // Close narrow gaps/slits with a 5x5 kernel, then open to remove speckle
-  const kClose = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
-  const kOpen = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
+  // Close narrow gaps/slits with a dynamic kernel based on image size (e.g. ~2.5% of min dimension)
+  // to heal internal reflections (like silver motor cylinders) without merging tools.
+  const minDim = Math.min(width, height);
+  const closeSize = Math.max(5, Math.round(minDim * 0.025));
+  const kCloseSize = closeSize % 2 === 0 ? closeSize + 1 : closeSize;
+  const openSize = Math.max(3, Math.round(minDim * 0.005));
+  const kOpenSize = openSize % 2 === 0 ? openSize + 1 : openSize;
+
+  const kClose = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(kCloseSize, kCloseSize));
+  const kOpen = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(kOpenSize, kOpenSize));
   cv.morphologyEx(m, m, cv.MORPH_CLOSE, kClose);
   cv.morphologyEx(m, m, cv.MORPH_OPEN, kOpen);
 

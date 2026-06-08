@@ -32,7 +32,7 @@ interface WorkerResponse { id: string; type: 'success' | 'error' | 'progress'; p
 
 // Process at a capped resolution for speed + smaller masks; contours are scaled
 // back to the original image space by `scaleToOriginal`.
-const MAX_DIM = 1024;
+const MAX_DIM = 1600;
 
 let model: any = null;
 let processor: any = null;
@@ -76,8 +76,11 @@ async function ensureLoaded(id: string): Promise<void> {
       console.log('%c===================================================', 'color: #22c55e; font-weight: bold;');
       console.log(`%c[SAM] LOUD LOG: SUCCESSFULLY LOADED SAM 2.1 Tiny (${device})`, 'color: #22c55e; font-weight: bold; font-size: 14px;');
       console.log('%c===================================================', 'color: #22c55e; font-weight: bold;');
+      // Notify main thread definitively which model loaded
+      post({ id, type: 'progress', payload: { status: 'model_loaded', model: `SAM 2.1 Hiera Tiny`, device, isSam2: true } });
     } catch (sam2Err) {
       console.warn('%c[SAM] LOUD LOG: Failed to load SAM 2.1! Falling back to SlimSAM...', 'color: #f59e0b; font-weight: bold; font-size: 12px;', sam2Err);
+      console.warn('[SAM] SAM2 load error details:', String(sam2Err));
       const SLIMSAM_MODEL_ID = 'Xenova/slimsam-77-uniform';
       try {
         model = await SamModel.from_pretrained(SLIMSAM_MODEL_ID, { dtype: 'q8', device, progress_callback } as any);
@@ -89,6 +92,8 @@ async function ensureLoaded(id: string): Promise<void> {
       console.log('%c===================================================', 'color: #3b82f6; font-weight: bold;');
       console.log(`%c[SAM] LOUD LOG: SUCCESSFULLY LOADED SLIMSAM FALLBACK (${device})`, 'color: #3b82f6; font-weight: bold; font-size: 12px;');
       console.log('%c===================================================', 'color: #3b82f6; font-weight: bold;');
+      // Notify main thread definitively which model loaded
+      post({ id, type: 'progress', payload: { status: 'model_loaded', model: `SlimSAM (FALLBACK)`, device, isSam2: false } });
     }
   })();
 
@@ -204,15 +209,64 @@ async function decodeAt(
   const mt = masks[0];
   const nMasks = mt.dims[1], H = mt.dims[2], W = mt.dims[3];
   const scores = outputs.iou_scores.data as Float32Array;
-  
-  let best = 0;
-  for (let i = 1; i < nMasks; i++) if (scores[i] > scores[best]) best = i;
-  
   const md = mt.data as Uint8Array;
+  
+  // Select the mask that has the largest area among candidates with high scores.
+  // This avoids picking a "part-only" mask (which often has a slightly higher IoU prediction)
+  // in favor of the "whole-object" mask.
+  // Compute areas for all candidate masks
+  const maskAreas = new Int32Array(nMasks);
+  for (let maskIdx = 0; maskIdx < nMasks; maskIdx++) {
+    let area = 0;
+    const off = maskIdx * H * W;
+    for (let p = 0; p < H * W; p++) {
+      if (md[off + p]) area++;
+    }
+    maskAreas[maskIdx] = area;
+  }
+
+  // Find the index of the highest scoring mask
+  let highestScoreIdx = 0;
+  let maxScore = scores[0];
+  for (let i = 1; i < nMasks; i++) {
+    if (scores[i] > maxScore) {
+      maxScore = scores[i];
+      highestScoreIdx = i;
+    }
+  }
+
+  // Restructured Whole-Object Heuristic:
+  // If there is any mask that is significantly larger (>= 1.25x the area of the highest-scoring mask)
+  // and has a score >= 0.55 (representing the whole object which often gets lower predicted IoU),
+  // we select that larger mask.
+  let best = highestScoreIdx;
+  let bestArea = maskAreas[highestScoreIdx];
+
+  for (let i = 0; i < nMasks; i++) {
+    if (maskAreas[i] > bestArea * 1.25 && scores[i] >= 0.55) {
+      best = i;
+      bestArea = maskAreas[i];
+    }
+  }
+
+  // Fallback to original selection logic if no significantly larger mask with score >= 0.55 is found
+  if (best === highestScoreIdx) {
+    const thresholdScore = Math.max(0.65, maxScore * 0.85);
+    let maxArea = -1;
+    for (let i = 0; i < nMasks; i++) {
+      if (scores[i] >= thresholdScore) {
+        if (maskAreas[i] > maxArea) {
+          maxArea = maskAreas[i];
+          best = i;
+        }
+      }
+    }
+  }
+
   const off = best * H * W;
   const out = new Uint8Array(H * W);
   for (let i = 0; i < H * W; i++) out[i] = md[off + i] ? 255 : 0;
-  
+
   return { data: out, width: W, height: H, score: scores[best] };
 }
 
@@ -231,270 +285,145 @@ async function segmentPoint(
 
   const r = await decodeAt(pts, labels, paperCorners);
   if (!r) return null;
+
+  // VALIDITY GATE (area): clicking blank paper makes SAM segment the whole
+  // sheet/background. A real tool is a bounded fraction of the frame. Reject
+  // paper-sized (>20%) and noise (<0.05%) masks so an empty-paper click yields
+  // nothing instead of a giant outline.
+  let area = 0;
+  for (let i = 0; i < r.data.length; i++) if (r.data[i]) area++;
+  const procArea = r.width * r.height;
+  if (area < procArea * 0.0005 || area > procArea * 0.20) {
+    console.log(`[SAM] click rejected — mask ${(100 * area / procArea).toFixed(1)}% of frame (not tool-sized)`);
+    return null;
+  }
+
   return { mask: r.data.buffer as ArrayBuffer, width: r.width, height: r.height, score: r.score, scale: session.scaleToOriginal };
 }
 
-// 64×64 thumbnail of a mask for cheap overlap/containment tests during NMS.
-function thumb64(mask: Uint8Array, W: number, H: number): { t: Uint8Array; area: number } {
-  const t = new Uint8Array(64 * 64);
-  let area = 0;
-  for (let ty = 0; ty < 64; ty++) {
-    const sy = Math.min(H - 1, (ty * H / 64) | 0);
-    for (let tx = 0; tx < 64; tx++) {
-      const sx = Math.min(W - 1, (tx * W / 64) | 0);
-      if (mask[sy * W + sx]) { t[ty * 64 + tx] = 1; area++; }
-    }
-  }
-  return { t, area };
+interface ToolProposal {
+  positivePoints: { x: number; y: number }[];
+  negativePoints: { x: number; y: number }[];
+  bbox: { x: number; y: number; w: number; h: number };
+  sourceArea: number;
 }
 
-// Flood-fill to fill internal holes in a 64x64 binary thumbnail
-function fillHoles64(thumb: Uint8Array): Uint8Array {
-  const filled = new Uint8Array(thumb);
-  const visited = new Uint8Array(64 * 64);
-  const queue: number[] = [];
-
-  // Add all border pixels that are 0 to the queue
-  for (let x = 0; x < 64; x++) {
-    // Top border
-    if (filled[x] === 0) { queue.push(x); visited[x] = 1; }
-    // Bottom border
-    const botIdx = 63 * 64 + x;
-    if (filled[botIdx] === 0) { queue.push(botIdx); visited[botIdx] = 1; }
-  }
-  for (let y = 1; y < 63; y++) {
-    // Left border
-    const leftIdx = y * 64;
-    if (filled[leftIdx] === 0) { queue.push(leftIdx); visited[leftIdx] = 1; }
-    // Right border
-    const rightIdx = y * 64 + 63;
-    if (filled[rightIdx] === 0) { queue.push(rightIdx); visited[rightIdx] = 1; }
-  }
-
-  // Flood-fill BFS to find all background pixels connected to the boundary
-  let head = 0;
-  while (head < queue.length) {
-    const idx = queue[head++];
-    const x = idx % 64;
-    const y = (idx / 64) | 0;
-
-    const neighbors = [
-      { nx: x - 1, ny: y },
-      { nx: x + 1, ny: y },
-      { nx: x, ny: y - 1 },
-      { nx: x, ny: y + 1 }
-    ];
-
-    for (const { nx, ny } of neighbors) {
-      if (nx >= 0 && nx < 64 && ny >= 0 && ny < 64) {
-        const nIdx = ny * 64 + nx;
-        if (filled[nIdx] === 0 && visited[nIdx] === 0) {
-          visited[nIdx] = 1;
-          queue.push(nIdx);
-        }
-      }
-    }
-  }
-
-  // Any pixel not connected to the border (visited is 0) and initially 0 is an internal hole.
-  // Fill it (set to 1).
-  for (let i = 0; i < 4096; i++) {
-    if (filled[i] === 0 && visited[i] === 0) {
-      filled[i] = 1;
-    }
-  }
-
-  return filled;
-}
-
-// Dilate a 64x64 binary thumbnail by 1 pixel (3x3 neighborhood) to check for adjacency
-function dilate64(thumb: Uint8Array): Uint8Array {
-  const dilated = new Uint8Array(64 * 64);
-  for (let y = 0; y < 64; y++) {
-    const yOff = y * 64;
-    for (let x = 0; x < 64; x++) {
-      if (thumb[yOff + x]) {
-        for (let dy = -1; dy <= 1; dy++) {
-          const ny = y + dy;
-          if (ny < 0 || ny >= 64) continue;
-          const nyOff = ny * 64;
-          for (let dx = -1; dx <= 1; dx++) {
-            const nx = x + dx;
-            if (nx < 0 || nx >= 64) continue;
-            dilated[nyOff + nx] = 1;
-          }
-        }
-      }
-    }
-  }
-  return dilated;
-}
-
-// Autonomous: decode every prompt, filter to tool-like masks, then drop
-// duplicates / sub-parts via containment-aware NMS. Returns survivor masks
-// (largest first) at processing resolution + the scale back to original.
-async function autoSegment(id: string, url: string, points: { x: number; y: number }[], paperCorners?: any): Promise<{ masks: { mask: ArrayBuffer; width: number; height: number; score: number }[]; scale: number }> {
+// Autonomous: decode every proposal using multi-point positive/negative prompts,
+// filter to tool-like masks, and return survivor masks at processing resolution.
+async function autoSegment(
+  id: string,
+  url: string,
+  proposals: ToolProposal[],
+  paperCorners?: any
+): Promise<{ masks: { mask: ArrayBuffer; width: number; height: number; score: number }[]; scale: number }> {
   await embed(id, url);
   if (!session) return { masks: [], scale: 1 };
 
   const W0 = session.image.width, H0 = session.image.height;
   const origArea = (W0 * session.scaleToOriginal) * (H0 * session.scaleToOriginal);
   const minArea = origArea * 0.0008;
-  const maxArea = origArea * 0.20;
+  const maxArea = origArea * 0.25;
 
-  type Cand = {
-    data: Uint8Array;
-    W: number;
-    H: number;
-    score: number;
-    area: number;
-    thumb: Uint8Array;
-    thumbArea: number;
-  };
-  const cands: Cand[] = [];
+  const results: { mask: ArrayBuffer; width: number; height: number; score: number }[] = [];
 
-  for (let i = 0; i < points.length; i++) {
-    post({ id, type: 'progress', payload: { status: 'segment', progress: Math.round((i / points.length) * 100) } });
-    const r = await decodeAt([[points[i].x * session.procScale, points[i].y * session.procScale]], [1], paperCorners);
-    if (!r || r.score < 0.7) continue;
+  for (let i = 0; i < proposals.length; i++) {
+    post({ id, type: 'progress', payload: { status: 'segment', progress: Math.round((i / proposals.length) * 100) } });
+    
+    const prop = proposals[i];
+    const pts: [number, number][] = [];
+    const labels: number[] = [];
 
-    let area = 0;
-    for (let p = 0; p < r.data.length; p++) if (r.data[p]) area++;
-    if (area < minArea || area > maxArea) continue;
-    const th = thumb64(r.data, r.width, r.height);
-    cands.push({ data: r.data, W: r.width, H: r.height, score: r.score, area, thumb: th.t, thumbArea: th.area });
-  }
-
-  const n = cands.length;
-  if (n === 0) return { masks: [], scale: session.scaleToOriginal };
-
-  // Union-Find to group masks that overlap by at least 20% of the smaller mask's thumbnail area.
-  // This merges sub-parts, overlapping frames/inserts, and split tool bodies (like jaw + body).
-  const parent = new Int32Array(n);
-  for (let i = 0; i < n; i++) parent[i] = i;
-
-  function find(i: number): number {
-    let root = i;
-    while (parent[root] !== root) root = parent[root];
-    let curr = i;
-    while (curr !== root) {
-      const nxt = parent[curr];
-      parent[curr] = root;
-      curr = nxt;
+    for (const p of prop.positivePoints) {
+      pts.push([p.x * session.procScale, p.y * session.procScale]);
+      labels.push(1);
     }
-    return root;
-  }
-
-  function union(i: number, j: number) {
-    const rootI = find(i);
-    const rootJ = find(j);
-    if (rootI !== rootJ) {
-      parent[rootI] = rootJ;
+    for (const p of prop.negativePoints) {
+      pts.push([p.x * session.procScale, p.y * session.procScale]);
+      labels.push(0);
     }
-  }
 
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      const cA = cands[i];
-      const cB = cands[j];
-      let inter = 0;
-      for (let p = 0; p < 4096; p++) {
-        if (cA.thumb[p] && cB.thumb[p]) inter++;
-      }
-      
-      // If the intersection is at least 20% of the smaller mask's thumbnail area,
-      // group them as part of the same tool (e.g. caliper jaw + caliper body).
-      const minOverlap = Math.min(cA.thumbArea, cB.thumbArea) * 0.20;
-      if (inter > minOverlap) {
-        union(i, j);
-        continue;
-      }
+    if (pts.length === 0) continue;
 
-      // Check if they touch or are extremely close by intersecting their dilated versions.
-      const dilA = dilate64(cA.thumb);
-      const dilB = dilate64(cB.thumb);
-      let interDil = 0;
-      for (let p = 0; p < 4096; p++) {
-        if (dilA[p] && dilB[p]) interDil++;
-      }
-      // If dilated shapes intersect, it means they touch or sit within a 1-pixel gap.
-      // Group them together as part of the same tool.
-      if (interDil > 0) {
-        union(i, j);
-        continue;
-      }
+    console.log(`[SAM] decoding proposal ${i}: points=${pts.length} (positives=${prop.positivePoints.length}, negatives=${prop.negativePoints.length})`);
 
-      // Check containment with hole-filling (handles hollow frames & inserts)
-      const filledA = fillHoles64(cA.thumb);
-      let bInA = true;
-      for (let p = 0; p < 4096; p++) {
-        if (cB.thumb[p] && !filledA[p]) {
-          bInA = false;
-          break;
-        }
-      }
-      if (bInA) {
-        union(i, j);
-        continue;
-      }
+    // Decode this proposal in a single pass with all positive + negative points
+    const r = await decodeAt(pts, labels, paperCorners);
+    if (!r || r.score < 0.6) continue;
 
-      const filledB = fillHoles64(cB.thumb);
-      let aInB = true;
-      for (let p = 0; p < 4096; p++) {
-        if (cA.thumb[p] && !filledB[p]) {
-          aInB = false;
-          break;
-        }
-      }
-      if (aInB) {
-        union(i, j);
-        continue;
-      }
+    // Validate size to avoid background bleed
+    let maskArea = 0;
+    for (let p = 0; p < r.data.length; p++) {
+      if (r.data[p]) maskArea++;
     }
+    const actualArea = maskArea * session.scaleToOriginal * session.scaleToOriginal;
+    if (actualArea < minArea || actualArea > maxArea) {
+      console.log(`[SAM] proposal ${i} rejected — area ${Math.round(actualArea)}px² outside [${Math.round(minArea)}, ${Math.round(maxArea)}]`);
+      continue;
+    }
+
+    results.push({
+      mask: r.data.buffer as ArrayBuffer,
+      width: r.width,
+      height: r.height,
+      score: r.score
+    });
   }
 
-  // Group indices by root
-  const groups = new Map<number, number[]>();
-  for (let i = 0; i < n; i++) {
-    const root = find(i);
-    if (!groups.has(root)) groups.set(root, []);
-    groups.get(root)!.push(i);
+  // Sort masks by score descending
+  results.sort((a, b) => b.score - a.score);
+
+  // Helper to compute IoU and Containment ratio between two masks
+  function computeOverlap(
+    maskA: Uint8Array,
+    maskB: Uint8Array
+  ): { iou: number; containmentA: number; containmentB: number } {
+    let intersection = 0;
+    let areaA = 0;
+    let areaB = 0;
+    const len = maskA.length;
+    for (let i = 0; i < len; i++) {
+      const a = maskA[i] > 0;
+      const b = maskB[i] > 0;
+      if (a) areaA++;
+      if (b) areaB++;
+      if (a && b) intersection++;
+    }
+    const union = areaA + areaB - intersection;
+    return {
+      iou: union > 0 ? intersection / union : 0,
+      containmentA: areaA > 0 ? intersection / areaA : 0,
+      containmentB: areaB > 0 ? intersection / areaB : 0,
+    };
   }
 
-  // Merge each group into a single candidate
-  const mergedCands: { data: Uint8Array; W: number; H: number; score: number; area: number }[] = [];
-  for (const [_, indices] of groups.entries()) {
-    const first = cands[indices[0]];
-    const W = first.W, H = first.H;
-    const mergedData = new Uint8Array(W * H);
-    let maxScore = 0;
+  // Non-Maximum Suppression (NMS)
+  const finalResults: typeof results = [];
+  const IOU_THRESHOLD = 0.5;
+  const CONTAINMENT_THRESHOLD = 0.75;
 
-    // Pixel-wise OR of all masks in the group
-    for (const idx of indices) {
-      const c = cands[idx];
-      maxScore = Math.max(maxScore, c.score);
-      for (let p = 0; p < W * H; p++) {
-        if (c.data[p]) mergedData[p] = 255;
+  for (const res of results) {
+    const maskData = new Uint8Array(res.mask);
+    let keep = true;
+
+    for (const kept of finalResults) {
+      const keptMaskData = new Uint8Array(kept.mask);
+      const { iou, containmentA, containmentB } = computeOverlap(keptMaskData, maskData);
+
+      // If overlapping or containment is too high, suppress the lower-scoring mask
+      if (iou > IOU_THRESHOLD || containmentB > CONTAINMENT_THRESHOLD || containmentA > CONTAINMENT_THRESHOLD) {
+        keep = false;
+        console.log(`[SAM] NMS suppressed proposal: score=${res.score.toFixed(3)} due to overlap with score=${kept.score.toFixed(3)} (iou=${iou.toFixed(3)}, contA=${containmentA.toFixed(3)}, contB=${containmentB.toFixed(3)})`);
+        break;
       }
     }
 
-    // Compute final area
-    let finalArea = 0;
-    for (let p = 0; p < W * H; p++) {
-      if (mergedData[p]) finalArea++;
+    if (keep) {
+      finalResults.push(res);
     }
-
-    // Skip if merged area violates boundaries
-    if (finalArea < minArea || finalArea > maxArea) continue;
-
-    mergedCands.push({ data: mergedData, W, H, score: maxScore, area: finalArea });
   }
 
-  // Sort merged candidates by area descending
-  mergedCands.sort((a, b) => b.area - a.area);
-
-  const masks = mergedCands.map((m) => ({ mask: m.data.buffer as ArrayBuffer, width: m.W, height: m.H, score: m.score }));
-  return { masks, scale: session.scaleToOriginal };
+  console.log(`[SAM] NMS complete: kept ${finalResults.length} / ${results.length} proposals`);
+  return { masks: finalResults, scale: session.scaleToOriginal };
 }
 
 self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
@@ -518,7 +447,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         break;
       }
       case 'autoSegment': {
-        const r = await autoSegment(id, payload.url, payload.points, payload.paperCorners);
+        const r = await autoSegment(id, payload.url, payload.proposals, payload.paperCorners);
         post({ id, type: 'success', payload: r }, r.masks.map((m) => m.mask));
         return;
       }

@@ -548,54 +548,20 @@ const ToolsStepPanel: React.FC = () => {
       <div
         className={`flex-1 overflow-y-auto space-y-3 ${isDisabled ? "opacity-60 pointer-events-none" : ""}`}
       >
-        {/* Auto Detect Banner */}
-        {isAutoDetecting && (
+        {/* Auto Detect (AI) Banner / Status */}
+        {isAiDetecting && (
           <div className="flex items-center gap-2 p-2.5 bg-[hsl(var(--primary)/0.05)] border border-[hsl(var(--primary)/0.1)] rounded-lg">
             <Loader2 className="w-3.5 h-3.5 text-[hsl(var(--primary))] animate-spin" />
             <span className="text-xs text-[hsl(var(--primary))]">
-              Auto-detecting tools...
+              {aiProgress !== null ? `AI detecting tools… ${aiProgress}%` : 'Initializing AI model…'}
             </span>
           </div>
         )}
 
-        {autoDetectDone && autoDetectCount > 0 && !isAutoDetecting && (
-          <div className="flex items-center gap-2 p-2.5 bg-[hsl(var(--success)/0.08)] border border-[hsl(var(--success)/0.15)] rounded-lg">
-            <Sparkles className="w-3.5 h-3.5 text-[hsl(var(--success))]" />
-            <span className="text-xs text-[hsl(var(--success))]">
-              {autoDetectCount} tool{autoDetectCount !== 1 ? 's' : ''} auto-detected
-            </span>
-          </div>
-        )}
-
-        {/* Auto Detect Button */}
-        <button
-          onClick={runAutoDetect}
-          disabled={isAutoDetecting || isDisabled}
-          className="
-            w-full h-9 px-3 bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]
-            border border-[hsl(var(--primary)/0.2)]
-            rounded-lg text-xs font-medium hover:bg-[hsl(var(--primary)/0.15)]
-            transition-colors flex items-center justify-center gap-1.5
-            disabled:opacity-50 disabled:cursor-not-allowed
-          "
-        >
-          {isAutoDetecting ? (
-            <>
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              Detecting...
-            </>
-          ) : (
-            <>
-              <Sparkles className="w-3.5 h-3.5" />
-              Auto Detect All Tools
-            </>
-          )}
-        </button>
-
-        {/* Detect All — AI (autonomous SlimSAM, incl. chrome) */}
+        {/* Auto Detect Tools (AI) Button */}
         <button
           onClick={runAiDetect}
-          disabled={isAiDetecting || isAutoDetecting || isDisabled}
+          disabled={isAiDetecting || isDisabled}
           className="
             w-full h-9 px-3 text-white
             rounded-lg text-xs font-semibold transition-all
@@ -603,17 +569,17 @@ const ToolsStepPanel: React.FC = () => {
             disabled:opacity-50 disabled:cursor-not-allowed
           "
           style={{ background: 'var(--gradient-brand)', boxShadow: 'var(--shadow-btn)' }}
-          title="Autonomous AI detection — precise on chrome too. Downloads a small model on first use (cached)."
+          title="Autonomous AI detection — precise on chrome too. Runs entirely locally on your device."
         >
           {isAiDetecting ? (
             <>
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              {aiProgress !== null ? `AI working… ${aiProgress}%` : 'Loading AI…'}
+              Detecting...
             </>
           ) : (
             <>
               <Sparkles className="w-3.5 h-3.5" />
-              Detect All — AI
+              Auto Detect Tools (AI)
             </>
           )}
         </button>

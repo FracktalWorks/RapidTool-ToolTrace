@@ -212,7 +212,12 @@ export async function contourFromMask(
   return request('contourFromMask', { mask, width, height });
 }
 
-export interface ProposeResult { blobs: Point2D[]; grid: Point2D[] }
+export interface ToolProposal {
+  positivePoints: Point2D[];
+  negativePoints: Point2D[];
+  bbox: { x: number; y: number; w: number; h: number };
+  sourceArea: number;
+}
 
 /**
  * Stage 1 of autonomous detection: propose SAM prompt points — classical blob
@@ -221,7 +226,7 @@ export interface ProposeResult { blobs: Point2D[]; grid: Point2D[] }
 export async function proposeRegions(
   imageUrl: string,
   paperCorners?: PaperCorners,
-): Promise<ProposeResult> {
+): Promise<ToolProposal[]> {
   const imageData = await getImageData(imageUrl);
-  return request<ProposeResult>('proposeRegions', { imageData, paperCorners });
+  return request<ToolProposal[]>('proposeRegions', { imageData, paperCorners });
 }

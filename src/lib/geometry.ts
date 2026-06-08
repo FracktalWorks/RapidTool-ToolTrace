@@ -229,7 +229,7 @@ export const createToolOutline = (
   samClicks?: { x: number; y: number; label: number }[]
 ): ToolOutline => {
   const area = polygonArea(points);
-  const processed = smoothContour(points, 0.5, 2);
+  const processed = smoothContour(points, 2.0, 3);
 
   // 1. Try template matching first (gives perfect CAD outline)
   let regularized: Point2D[] | undefined;
@@ -253,7 +253,7 @@ export const createToolOutline = (
       regularized = regularizeContour(processed, {
         lineThreshold: 2.0,
         arcResidual: 5.0,
-        symmetryStrength: 0.6,
+        symmetryStrength: 0.0,
       });
       if (!regularized || regularized.length < 4) {
         regularized = undefined;

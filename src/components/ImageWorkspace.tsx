@@ -584,7 +584,7 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
 
             let result = null;
             try {
-              result = await samSegmentPoint(imageUrl, currentClicks, setSamProgress, undefined, paperCorners || undefined);
+              result = await samSegmentPoint(imageUrl, currentClicks, { paperCorners: paperCorners || undefined, onProgress: setSamProgress });
             } catch (samErr) {
               console.warn('SAM refinement failed:', samErr);
             } finally {
@@ -600,14 +600,18 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
         // New tool creation
         const initialClicks = [{ x: point.x, y: point.y, label: 1 }];
         let result = null;
+        let samRan = false;
         try {
-          result = await samSegmentPoint(imageUrl, initialClicks, setSamProgress, undefined, paperCorners || undefined);
+          result = await samSegmentPoint(imageUrl, initialClicks, { paperCorners: paperCorners || undefined, onProgress: setSamProgress });
+          samRan = true; // SAM completed (a null result = it ran and found no valid tool)
         } catch (samErr) {
           console.warn('SAM unavailable, falling back to classical trace:', samErr);
         } finally {
           setSamProgress(null);
         }
-        if (!result) {
+        // Fall back to classical ONLY when SAM was unavailable. If SAM ran and
+        // returned null, the click was on blank paper — create nothing.
+        if (!result && !samRan) {
           result = await traceTool(imageUrl, point.x, point.y, paperCorners || undefined);
         }
         if (result) {
