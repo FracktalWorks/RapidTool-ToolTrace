@@ -10,7 +10,7 @@
  */
 
 import type { ToolTracingResult, PaperCorners, ToolProposal } from './cvWorkerManager';
-import { contourFromMask, proposeRegions } from './cvWorkerManager';
+import { contourFromMask, proposeRegions, getImageData } from './cvWorkerManager';
 
 // Scale a contour (in processing-resolution space) back to original image space.
 function scaleResult(r: ToolTracingResult | null, scale: number): ToolTracingResult | null {
@@ -74,12 +74,21 @@ function ensureWorker(): Worker {
   return worker;
 }
 
-function request<T>(type: string, payload: unknown, onProgress?: (p: SamLoadProgress) => void): Promise<T> {
+function request<T>(type: string, payload: any, onProgress?: (p: SamLoadProgress) => void): Promise<T> {
   const w = ensureWorker();
   return new Promise<T>((resolve, reject) => {
     const id = `${type}-${++reqId}`;
     pending.set(id, { resolve, reject, onProgress });
-    w.postMessage({ id, type, payload });
+    
+    // Transfer raw image bytes if present to avoid cloning overhead
+    const transfer: Transferable[] = [];
+    if (payload && typeof payload === 'object' && payload.rgbaData) {
+      if (payload.rgbaData instanceof Uint8ClampedArray || payload.rgbaData instanceof Uint8Array) {
+        transfer.push(payload.rgbaData.buffer);
+      }
+    }
+    
+    w.postMessage({ id, type, payload }, transfer);
   });
 }
 
@@ -103,9 +112,17 @@ export async function samSegmentPoint(
   clicks: { x: number; y: number; label: number }[],
   opts?: { paperCorners?: PaperCorners; onProgress?: (p: SamLoadProgress) => void },
 ): Promise<ToolTracingResult | null> {
+  const imageData = await getImageData(imageUrl);
   const seg = await request<{ mask: ArrayBuffer; width: number; height: number; score: number; scale: number } | null>(
     'segmentPoint',
-    { url: imageUrl, clicks, paperCorners: opts?.paperCorners },
+    {
+      url: imageUrl,
+      clicks,
+      paperCorners: opts?.paperCorners,
+      rgbaData: imageData.data,
+      width: imageData.width,
+      height: imageData.height
+    },
     opts?.onProgress,
   );
   everLoaded = true;
@@ -145,9 +162,17 @@ export async function samAutoSegment(
   if (proposals.length === 0) return [];
 
   // Stage 2+3 — SAM batch decode + filter (in the worker).
+  const imageData = await getImageData(imageUrl);
   const res = await request<{ masks: { mask: ArrayBuffer; width: number; height: number; score: number }[]; scale: number }>(
     'autoSegment',
-    { url: imageUrl, proposals, paperCorners },
+    {
+      url: imageUrl,
+      proposals,
+      paperCorners,
+      rgbaData: imageData.data,
+      width: imageData.width,
+      height: imageData.height
+    },
     onProgress,
   );
   everLoaded = true;

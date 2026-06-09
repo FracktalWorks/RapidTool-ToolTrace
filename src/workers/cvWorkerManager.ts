@@ -79,7 +79,7 @@ async function request<T>(type: string, payload: unknown): Promise<T> {
 }
 
 // Decode an image URL into ImageData for the worker.
-async function getImageData(url: string): Promise<ImageData> {
+export async function getImageData(url: string): Promise<ImageData> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';

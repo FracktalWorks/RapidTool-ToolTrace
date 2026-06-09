@@ -176,6 +176,13 @@ function paperInteriorMask(corners: PaperCorners, rows: number, cols: number): a
   ptsVec.push_back(ptsMat);
   cv.fillPoly(m, ptsVec, new cv.Scalar(255));
   deleteMats(ptsVec, ptsMat);
+
+  // Erode by a small margin to strip away transition noise at the paper boundary
+  const margin = Math.max(10, Math.round(cols * 0.008));
+  const kErode = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(margin, margin));
+  cv.erode(m, m, kErode);
+  kErode.delete();
+
   return m;
 }
 
@@ -214,21 +221,22 @@ function medianMasked(chan: any, mask: any): number {
 // subtraction, so these transfer directly from harness calibration.
 const T_CHROMA = 9;   // a,b distance for a "coloured" tool (paper noise ~2-3)
 const DARK_K = 0.55;  // "dark" tool if L < DARK_K · paperL (shadows stay above)
+const T_VAR = 70;     // local grayscale variance threshold for chrome/textured tools
+                      // paper flat regions ≈ 5-20, screw threads ≈ 100-800
 
 // Build a binary tool mask that is PAPER-COLOUR-AGNOSTIC and ROBUST.
 //
 // A pixel is foreground if it differs from the SAMPLED paper colour by an
-// ABSOLUTE margin in one of two independent, physical ways:
+// ABSOLUTE margin in one of THREE independent, physical ways:
 //   • chroma distance √((a-pA)²+(b-pB)²) > T_CHROMA → coloured tools (shadow-proof)
 //   • lightness L < DARK_K · paperL                  → black/dark tools
+//   • local grayscale variance > T_VAR               → chrome/textured tools (screw threads,
+//                                                       knurled surfaces, etc.)
 //
-// Absolute thresholds (no normalize / no Otsu) are the key robustness property:
-// uniform paper can NEVER be forced into "foreground", so tools stay SEPARATE
-// instead of merging into one blob. Bright polished chrome that matches paper
-// in both colour and lightness is intentionally not chased (the local-variance
-// cue for it proved too blunt — it bled across the whole sheet). RETR_EXTERNAL
-// still fills bright interiors of tools with dark perimeters, and fully-chrome
-// parts can be captured with the box-trace tool.
+// The variance cue is critical for polished chrome tools (e.g. extruder screws,
+// screwdriver shafts) that are bright and achromatic — invisible to the first two cues.
+// Shadow suppression: smooth regions (variance < T_VAR) are excluded from the
+// darkness cue to prevent paper fold shadows from being mis-detected.
 function buildToolMask(src: any, paperCorners?: PaperCorners): any {
   const rows = src.rows;
   const cols = src.cols;
@@ -272,12 +280,47 @@ function buildToolMask(src: any, paperCorners?: PaperCorners): any {
   maskChroma.convertTo(maskChroma, cv.CV_8U);
 
   // Darkness: L < DARK_K · paperL  → black / dark tools.
-  const maskDark = new cv.Mat();
-  cv.threshold(L, maskDark, DARK_K * pL, 255, cv.THRESH_BINARY_INV);
+  // Shadow-suppressed: also require local variance > 10 to reject smooth paper shadows.
+  const maskDarkRaw = new cv.Mat();
+  cv.threshold(L, maskDarkRaw, DARK_K * pL, 255, cv.THRESH_BINARY_INV);
 
-  // Union of the two cues.
+  // ── CUE 3: Local Variance (chrome / textured tools) ──────────────────────
+  // Polished chrome tools (extruder screws, screwdriver shafts) are bright and
+  // achromatic — invisible to cues 1 & 2. But they show sharp local pixel
+  // variance from surface texture, reflections, and thread geometry.
+  //
+  // localVar = E[I²] - (E[I])² via 15×15 box blur on float grayscale.
+  const grayF = new cv.Mat();
+  L.convertTo(grayF, cv.CV_32F);
+  const varKSize = Math.max(5, Math.round(Math.min(rows, cols) * 0.012)); // ~1.2% of min dim
+  const kVar = varKSize % 2 === 0 ? varKSize + 1 : varKSize;
+
+  const meanI = new cv.Mat();
+  const meanI2 = new cv.Mat();
+  const grayF2 = new cv.Mat();
+  cv.multiply(grayF, grayF, grayF2);
+  cv.blur(grayF, meanI, new cv.Size(kVar, kVar));
+  cv.blur(grayF2, meanI2, new cv.Size(kVar, kVar));
+
+  // var = E[I²] - E[I]²  (always ≥ 0 in theory, but clamp for float precision)
+  const varMat = new cv.Mat();
+  const meanI2sq = new cv.Mat();
+  cv.multiply(meanI, meanI, meanI2sq);
+  cv.absdiff(meanI2, meanI2sq, varMat);
+
+  const maskVar8 = new cv.Mat();
+  cv.threshold(varMat, maskVar8, T_VAR, 255, cv.THRESH_BINARY);
+  maskVar8.convertTo(maskVar8, cv.CV_8U);
+
+  // Shadow-suppress the darkness mask: a dark region is only a tool if it ALSO
+  // has meaningful local variance (i.e. it's not a smooth paper shadow).
+  const maskDark = new cv.Mat();
+  cv.bitwise_and(maskDarkRaw, maskVar8, maskDark);
+
+  // Union of all three cues.
   const mask = new cv.Mat();
   cv.bitwise_or(maskChroma, maskDark, mask);
+  cv.bitwise_or(mask, maskVar8, mask);
 
   // Restrict to the paper interior when known.
   if (interior) cv.bitwise_and(mask, interior, mask);
@@ -288,7 +331,9 @@ function buildToolMask(src: any, paperCorners?: PaperCorners): any {
   cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kClean);
   cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kClean);
 
-  deleteMats(rgb, lab, L, A, B, Af, Bf, pAm, pBm, dA, dB, chroma2, maskChroma, maskDark, kClean);
+  deleteMats(rgb, lab, L, A, B, Af, Bf, pAm, pBm, dA, dB, chroma2,
+             maskChroma, maskDarkRaw, maskDark, grayF, grayF2, meanI, meanI2,
+             meanI2sq, varMat, maskVar8, kClean);
   ch.delete();
   if (sampleMask !== interior) sampleMask.delete();
   if (interior) interior.delete();
@@ -492,7 +537,10 @@ function findBestQuadrilateral(binary: any, totalArea: number): { points: Point2
     const contourArea = cv.contourArea(contour);
 
     // Area filter: paper must be at least 5% and can be almost the full image (up to 99.5%)
-    if (contourArea < totalArea * 0.05 || contourArea > totalArea * 0.995) continue;
+    if (contourArea < totalArea * 0.05 || contourArea > totalArea * 0.995) {
+      contour.delete();
+      continue;
+    }
 
     const peri = cv.arcLength(contour, true);
     const approx = new cv.Mat();
@@ -570,6 +618,7 @@ function findBestQuadrilateral(binary: any, totalArea: number): { points: Point2
     }
 
     approx.delete();
+    contour.delete();
   }
 
   deleteMats(contours, hierarchy);
@@ -765,6 +814,7 @@ function extractContourPoints(
 function traceAllTools(imageData: ImageData, paperCorners?: PaperCorners): TraceResult[] {
   console.log('traceAllTools: finding all tools on paper...', paperCorners ? 'with boundary masking' : '');
   const src = cv.matFromImageData(imageData);
+  const totalArea = src.rows * src.cols;
 
   // Single fused mask shared with click/box trace (fixed ∪ Otsu, shadow-free,
   // resolution-aware morphology, optional paper boundary).
@@ -775,7 +825,10 @@ function traceAllTools(imageData: ImageData, paperCorners?: PaperCorners): Trace
   const tempHierarchy = new cv.Mat();
   cv.findContours(mask, tempContours, tempHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
   for (let i = 0; i < tempContours.size(); i++) {
-    cv.drawContours(mask, tempContours, i, new cv.Scalar(255), -1);
+    const c = tempContours.get(i);
+    if (cv.contourArea(c) < totalArea * 0.25) {
+      cv.drawContours(mask, tempContours, i, new cv.Scalar(255), -1);
+    }
   }
   deleteMats(tempContours, tempHierarchy);
 
@@ -783,8 +836,7 @@ function traceAllTools(imageData: ImageData, paperCorners?: PaperCorners): Trace
   const hierarchy = new cv.Mat();
   cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
 
-  const totalArea = src.rows * src.cols;
-  const minArea = Math.max(1000, totalArea * 0.0005);
+  const minArea = Math.max(800, totalArea * 0.0003); // Lowered to catch smaller tools
   const results: TraceResult[] = [];
 
   for (let i = 0; i < contours.size(); i++) {
@@ -792,15 +844,22 @@ function traceAllTools(imageData: ImageData, paperCorners?: PaperCorners): Trace
     const area = cv.contourArea(contour);
 
     // Reject noise (too small) and the paper itself (too large).
-    if (area < minArea || area > totalArea * 0.6) continue;
-    // Reject low-quality blobs.
+    if (area < minArea || area > totalArea * 0.6) {
+      contour.delete();
+      continue;
+    }
+    // Reject low-quality blobs — lowered from 0.3 to 0.15 for thin tool parts.
     const solidity = calculateSolidity(contour);
-    if (solidity < 0.3) continue;
+    if (solidity < 0.15) {
+      contour.delete();
+      continue;
+    }
 
     const confidence = contourConfidence(contour);
     const result = extractContourPoints(contour, 0, 0, area, confidence);
     results.push(result);
     console.log(`Found tool: ${result.points.length} pts, area=${Math.round(area)}, conf=${confidence.toFixed(2)}`);
+    contour.delete();
   }
 
   deleteMats(mask, contours, hierarchy);
@@ -1053,20 +1112,46 @@ function buildProposalFromContour(
 }
 
 function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): ToolProposal[] {
-  const src = cv.matFromImageData(imageData);
+  const full = cv.matFromImageData(imageData);
+  const origW = full.cols;
+  const origH = full.rows;
+
+  const MAX_PROP_DIM = 1200;
+  const scale = Math.min(1, MAX_PROP_DIM / Math.max(origW, origH));
+
+  let src = full;
+  let scaledCorners = paperCorners;
+
+  if (scale < 1) {
+    src = new cv.Mat();
+    cv.resize(full, src, new cv.Size(Math.round(origW * scale), Math.round(origH * scale)), 0, 0, cv.INTER_AREA);
+    if (paperCorners) {
+      scaledCorners = {
+        topLeft: { x: paperCorners.topLeft.x * scale, y: paperCorners.topLeft.y * scale },
+        topRight: { x: paperCorners.topRight.x * scale, y: paperCorners.topRight.y * scale },
+        bottomRight: { x: paperCorners.bottomRight.x * scale, y: paperCorners.bottomRight.y * scale },
+        bottomLeft: { x: paperCorners.bottomLeft.x * scale, y: paperCorners.bottomLeft.y * scale },
+      };
+    }
+    console.log(`proposeRegions: Downscaled processing image from ${origW}x${origH} to ${src.cols}x${src.rows} (scale=${scale.toFixed(4)})`);
+  }
+
   const rows = src.rows, cols = src.cols;
   const totalArea = rows * cols;
-  const minArea = Math.max(1000, totalArea * 0.0005);
+  const minArea = Math.max(800, totalArea * 0.0003);
 
   // 1. Classical tool detection mask
-  const classicalMask = buildToolMask(src, paperCorners);
+  const classicalMask = buildToolMask(src, scaledCorners);
 
-  // Fill holes in classical mask to make it solid
+  // Fill holes in classical mask to make it solid (ignore paper-sized noise contours)
   const tempContours = new cv.MatVector();
   const tempHierarchy = new cv.Mat();
   cv.findContours(classicalMask, tempContours, tempHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
   for (let i = 0; i < tempContours.size(); i++) {
-    cv.drawContours(classicalMask, tempContours, i, new cv.Scalar(255), -1);
+    const c = tempContours.get(i);
+    if (cv.contourArea(c) < totalArea * 0.25) {
+      cv.drawContours(classicalMask, tempContours, i, new cv.Scalar(255), -1);
+    }
   }
   deleteMats(tempContours, tempHierarchy);
 
@@ -1078,42 +1163,47 @@ function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): Tool
   const edges = autoTunedCanny(blurred);
 
   // Restrict edges to paper interior if corners are known
-  const interior = paperCorners ? paperInteriorMask(paperCorners, rows, cols) : null;
+  const interior = scaledCorners ? paperInteriorMask(scaledCorners, rows, cols) : null;
   if (interior) {
     cv.bitwise_and(edges, interior, edges);
   }
 
   // 3. Connect chrome edge fragments
-  const dilateKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(9, 9));
+  const kDilSizeVal = Math.max(5, Math.round(13 * scale)) % 2 === 0 ? Math.max(5, Math.round(13 * scale)) + 1 : Math.max(5, Math.round(13 * scale));
+  const dilateKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(kDilSizeVal, kDilSizeVal));
   cv.dilate(edges, edges, dilateKernel);
-  const closeKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(15, 15));
+  
+  const kCloseSizeVal = Math.max(5, Math.round(25 * scale)) % 2 === 0 ? Math.max(5, Math.round(25 * scale)) + 1 : Math.max(5, Math.round(25 * scale));
+  const closeKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(kCloseSizeVal, kCloseSizeVal));
   cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, closeKernel);
 
   // 4. Morphologically merge classical and edge detections
   const combined = new cv.Mat();
   cv.bitwise_or(classicalMask, edges, combined);
 
-  // Reduce morphological close size to prevent merging parallel adjacent tools (clamped between 15 and 35)
-  const closeSize = Math.max(15, Math.min(35, Math.round(cols * 0.01))); // 1% of width
+  // Reduce morphological close size to prevent merging parallel adjacent tools
+  const closeSize = Math.max(11, Math.min(25, Math.round(cols * 0.007)));
   const kCloseSize = closeSize % 2 === 0 ? closeSize + 1 : closeSize;
   const morphClose = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(kCloseSize, kCloseSize));
   cv.morphologyEx(combined, combined, cv.MORPH_CLOSE, morphClose);
 
-  const openSize = Math.max(11, Math.round(cols * 0.008)); // 0.8% of width
+  // Small open only to remove salt-noise specks — keep thin tool connections intact
+  const openSize = Math.max(3, Math.min(5, Math.round(cols * 0.002)));
   const kOpenSize = openSize % 2 === 0 ? openSize + 1 : openSize;
   const morphOpen = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(kOpenSize, kOpenSize));
   cv.morphologyEx(combined, combined, cv.MORPH_OPEN, morphOpen);
 
-  // Connect collinear contours that are close to each other (e.g. black flange and blue body separated by silver cylinder)
+  // Connect collinear contours that are close to each other
   const collinearContours = new cv.MatVector();
   const collinearHierarchy = new cv.Mat();
   cv.findContours(combined, collinearContours, collinearHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
   const validCands: { cx: number; cy: number; rect: any }[] = [];
+  const candAreaThresh = Math.max(50, Math.round(300 * scale * scale));
   for (let i = 0; i < collinearContours.size(); i++) {
     const c = collinearContours.get(i);
     const area = cv.contourArea(c);
-    if (area > 300) {
+    if (area > candAreaThresh) {
       const rect = cv.boundingRect(c);
       validCands.push({
         cx: Math.round(rect.x + rect.width / 2),
@@ -1121,6 +1211,7 @@ function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): Tool
         rect
       });
     }
+    c.delete();
   }
 
   for (let i = 0; i < validCands.length; i++) {
@@ -1130,7 +1221,6 @@ function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): Tool
       const r1 = c1.rect;
       const r2 = c2.rect;
 
-      // Check horizontal alignment and gap
       const yOverlap = Math.max(r1.y, r2.y) < Math.min(r1.y + r1.height, r2.y + r2.height);
       let hGap = Infinity;
       if (r1.x + r1.width < r2.x) {
@@ -1141,7 +1231,6 @@ function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): Tool
         hGap = 0;
       }
 
-      // Check vertical alignment and gap
       const xOverlap = Math.max(r1.x, r2.x) < Math.min(r1.x + r1.width, r2.x + r2.width);
       let vGap = Infinity;
       if (r1.y + r1.height < r2.y) {
@@ -1155,24 +1244,20 @@ function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): Tool
       let shouldConnect = false;
       let thick = 20;
 
-      // Strict alignment checks to prevent merging parallel adjacent tools (e.g. caliper and dial indicator)
-      // or giant hand shadows to small tools.
       const heightRatio = Math.max(r1.height, r2.height) / Math.min(r1.height, r2.height);
       const widthRatio = Math.max(r1.width, r2.width) / Math.min(r1.width, r2.width);
 
-      if (yOverlap && hGap < cols * 0.18 && heightRatio < 3.5) {
-        // Horizontal connection: centers must align vertically, and not both vertically elongated
+      if (yOverlap && hGap < cols * 0.08 && heightRatio < 2.5) {
         const cyOffset = Math.abs(c1.cy - c2.cy);
-        const maxOffset = Math.min(r1.height, r2.height) * 0.6;
+        const maxOffset = Math.min(r1.height, r2.height) * 0.5;
         const bothVertElongated = r1.height > r1.width * 1.3 && r2.height > r2.width * 1.3;
         if (cyOffset < maxOffset && !bothVertElongated) {
           shouldConnect = true;
           thick = Math.min(r1.height, r2.height, 50);
         }
-      } else if (xOverlap && vGap < rows * 0.18 && widthRatio < 3.5) {
-        // Vertical connection: centers must align horizontally, and not both horizontally elongated
+      } else if (xOverlap && vGap < rows * 0.08 && widthRatio < 2.5) {
         const cxOffset = Math.abs(c1.cx - c2.cx);
-        const maxOffset = Math.min(r1.width, r2.width) * 0.6;
+        const maxOffset = Math.min(r1.width, r2.width) * 0.5;
         const bothHorizElongated = r1.width > r1.height * 1.3 && r2.width > r2.height * 1.3;
         if (cxOffset < maxOffset && !bothHorizElongated) {
           shouldConnect = true;
@@ -1189,8 +1274,6 @@ function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): Tool
   }
   deleteMats(collinearContours, collinearHierarchy);
 
-
-
   // 5. Find contours of unified tool regions
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
@@ -1202,28 +1285,224 @@ function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): Tool
     const c = contours.get(i);
     const area = cv.contourArea(c);
     
-    // Reject noise (too small) and paper background (too large)
-    if (area < minArea || area > totalArea * 0.6) continue;
-    
-    // Solidity check to filter out long thin lines, wires, or scribbles
-    if (calculateSolidity(c) < 0.20) continue;
-
-    const proposal = buildProposalFromContour(c, area, rows, cols, combined);
-    if (proposal) {
-      proposals.push(proposal);
+    if (area < minArea || area > totalArea * 0.6) {
+      c.delete();
+      continue;
     }
+    
+    if (calculateSolidity(c) < 0.12) {
+      c.delete();
+      continue;
+    }
+
+    const rect = cv.boundingRect(c);
+    const isSplitCandidate = area > minArea * 1.5;
+    let addedAny = false;
+
+    if (isSplitCandidate) {
+      try {
+        const tempMask = cv.Mat.zeros(rows, cols, cv.CV_8U);
+        const cVec = new cv.MatVector();
+        cVec.push_back(c);
+        cv.drawContours(tempMask, cVec, 0, new cv.Scalar(255), -1);
+        cVec.delete();
+
+        let splitContours: any = null;
+        let chosenKSize = 0;
+        
+        const splitKernelSizes = [11, 19, 27, 35, 43, 51].map(k => {
+          const s = Math.round(k * scale);
+          const ks = s % 2 === 0 ? s + 1 : s;
+          return Math.max(5, ks);
+        });
+        const uniqueKernelSizes = Array.from(new Set(splitKernelSizes));
+
+        for (const kSize of uniqueKernelSizes) {
+          const tempEroded = new cv.Mat();
+          const erodeKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(kSize, kSize));
+          cv.erode(tempMask, tempEroded, erodeKernel);
+          erodeKernel.delete();
+
+          const subContours = new cv.MatVector();
+          const subHier = new cv.Mat();
+          cv.findContours(tempEroded, subContours, subHier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+          let validSubCount = 0;
+          for (let j = 0; j < subContours.size(); j++) {
+            const subC = subContours.get(j);
+            if (cv.contourArea(subC) > Math.max(200 * scale * scale, minArea * 0.2)) {
+              validSubCount++;
+            }
+            subC.delete();
+          }
+
+          if (validSubCount >= 2) {
+            splitContours = subContours;
+            chosenKSize = kSize;
+            subHier.delete();
+            tempEroded.delete();
+            break;
+          } else {
+            deleteMats(subContours, subHier, tempEroded);
+          }
+        }
+
+        if (splitContours) {
+          for (let j = 0; j < splitContours.size(); j++) {
+            const subC = splitContours.get(j);
+            if (cv.contourArea(subC) > Math.max(200 * scale * scale, minArea * 0.2)) {
+              const subMask = cv.Mat.zeros(rows, cols, cv.CV_8U);
+              const subVec = new cv.MatVector();
+              subVec.push_back(subC);
+              cv.drawContours(subMask, subVec, 0, new cv.Scalar(255), -1);
+
+              const dilateKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(chosenKSize, chosenKSize));
+              cv.dilate(subMask, subMask, dilateKernel);
+              dilateKernel.delete();
+
+              const resContours = new cv.MatVector();
+              const resHier = new cv.Mat();
+              cv.findContours(subMask, resContours, resHier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+              if (resContours.size() > 0) {
+                const restoredC = resContours.get(0);
+                const restoredArea = cv.contourArea(restoredC);
+                const proposal = buildProposalFromContour(restoredC, restoredArea, rows, cols, combined);
+                if (proposal) {
+                  const minBboxDim = Math.min(proposal.bbox.w, proposal.bbox.h);
+                  const maxBboxDim = Math.max(proposal.bbox.w, proposal.bbox.h);
+                  const minDimThresh = Math.max(8, Math.round(20 * scale));
+                  const maxDimThresh = Math.max(20, Math.round(50 * scale));
+                  if (minBboxDim >= minDimThresh && maxBboxDim >= maxDimThresh) {
+                    proposals.push(proposal);
+                    addedAny = true;
+                  }
+                }
+                restoredC.delete();
+              }
+              deleteMats(subMask, subVec, resContours, resHier);
+            }
+            subC.delete();
+          }
+          splitContours.delete();
+        }
+        tempMask.delete();
+      } catch (splitErr: any) {
+        console.log(`[WORKER ERROR] Split candidate failed for contour ${i}: ${splitErr.message}`);
+      }
+    }
+
+    if (!addedAny) {
+      const proposal = buildProposalFromContour(c, area, rows, cols, combined);
+      if (proposal) {
+        const minBboxDim = Math.min(proposal.bbox.w, proposal.bbox.h);
+        const maxBboxDim = Math.max(proposal.bbox.w, proposal.bbox.h);
+        const minDimThresh = Math.max(8, Math.round(20 * scale));
+        const maxDimThresh = Math.max(20, Math.round(50 * scale));
+        if (minBboxDim < minDimThresh || maxBboxDim < maxDimThresh) {
+          c.delete();
+          continue;
+        }
+        proposals.push(proposal);
+      }
+    }
+    c.delete();
   }
 
   // Cleanup
-  deleteMats(src, classicalMask, gray, blurred, edges, dilateKernel, closeKernel, combined, morphClose, morphOpen, contours, hierarchy);
+  deleteMats(classicalMask, gray, blurred, edges, dilateKernel, closeKernel, combined, morphClose, morphOpen, contours, hierarchy);
   if (interior) interior.delete();
+  if (src !== full) src.delete();
+  full.delete();
 
-  console.log(`proposeRegions: found ${proposals.length} unified proposals`);
-  for (let i = 0; i < proposals.length; i++) {
-    const p = proposals[i];
+  let finalProposals = proposals;
+  
+  if (proposals.length >= 3) {
+    const sorted = proposals.slice().sort((a, b) => {
+      const cya = a.bbox.y + a.bbox.h / 2;
+      const cyb = b.bbox.y + b.bbox.h / 2;
+      return cya - cyb;
+    });
+
+    const stripBandH = rows * 0.12;
+    const merged: ToolProposal[] = [];
+    const used = new Set<number>();
+
+    for (let i = 0; i < sorted.length; i++) {
+      if (used.has(i)) continue;
+      const group: ToolProposal[] = [sorted[i]];
+      const refCy = sorted[i].bbox.y + sorted[i].bbox.h / 2;
+
+      for (let j = i + 1; j < sorted.length; j++) {
+        if (used.has(j)) continue;
+        const cj = sorted[j].bbox.y + sorted[j].bbox.h / 2;
+        if (Math.abs(cj - refCy) < stripBandH) {
+          group.push(sorted[j]);
+          used.add(j);
+        }
+      }
+      used.add(i);
+
+      const groupSortedX = group.slice().sort((a, b) => a.bbox.x - b.bbox.x);
+      let hasLargeGap = false;
+      for (let k = 0; k < groupSortedX.length - 1; k++) {
+        const currentRight = groupSortedX[k].bbox.x + groupSortedX[k].bbox.w;
+        const nextLeft = groupSortedX[k+1].bbox.x;
+        const gap = nextLeft - currentRight;
+        if (gap > cols * 0.12) {
+          hasLargeGap = true;
+          break;
+        }
+      }
+
+      const hasVerticalTool = group.some(p => p.bbox.h > p.bbox.w * 1.1);
+
+      if (group.length >= 3 && !hasVerticalTool && !hasLargeGap) {
+        let minX = Infinity, minY = Infinity, maxX = 0, maxY = 0;
+        for (const p of group) {
+          minX = Math.min(minX, p.bbox.x);
+          minY = Math.min(minY, p.bbox.y);
+          maxX = Math.max(maxX, p.bbox.x + p.bbox.w);
+          maxY = Math.max(maxY, p.bbox.y + p.bbox.h);
+        }
+        const unionW = maxX - minX;
+        const unionH = maxY - minY;
+        const unionCx = (minX + maxX) / 2;
+        const unionCy = (minY + maxY) / 2;
+
+        const positivePoints: { x: number; y: number }[] = [];
+        for (let k = 0; k < 7; k++) {
+          const t = (k + 0.5) / 7;
+          positivePoints.push({ x: minX + t * unionW, y: unionCy });
+        }
+        const margin = Math.max(30, unionH * 0.25);
+        const negativePoints: { x: number; y: number }[] = [
+          { x: unionCx, y: Math.min(rows - 1, maxY + margin) },
+          { x: Math.max(0, minX - margin), y: unionCy },
+          { x: Math.min(cols - 1, maxX + margin), y: unionCy },
+          { x: unionCx, y: Math.max(0, minY - margin) },
+        ];
+        merged.push({
+          positivePoints,
+          negativePoints,
+          bbox: { x: minX, y: minY, w: unionW, h: unionH },
+          sourceArea: unionW * unionH,
+        });
+      } else {
+        merged.push(...group);
+      }
+    }
+
+    if (merged.length < proposals.length) {
+      finalProposals = merged;
+    }
+  }
+
+  console.log(`proposeRegions: found ${finalProposals.length} unified proposals`);
+  for (let i = 0; i < finalProposals.length; i++) {
+    const p = finalProposals[i];
     console.log(`  Proposal ${i}: bbox=[x=${p.bbox.x}, y=${p.bbox.y}, w=${p.bbox.w}, h=${p.bbox.h}], positives=${p.positivePoints.length}, negatives=${p.negativePoints.length}`);
   }
-  return proposals;
+  return finalProposals;
 }
 
 // ============================================================================
@@ -1234,12 +1513,28 @@ function contourFromMask(mask: Uint8Array, width: number, height: number): Trace
   const m = new cv.Mat(height, width, cv.CV_8UC1);
   m.data.set(mask);
 
-  // Close narrow gaps/slits with a dynamic kernel based on image size (e.g. ~2.5% of min dimension)
-  // to heal internal reflections (like silver motor cylinders) without merging tools.
-  const minDim = Math.min(width, height);
-  const closeSize = Math.max(5, Math.round(minDim * 0.025));
+  // Compute the bounding box of the mask content to adapt the close kernel
+  // proportionally to THIS tool's size, not the whole image.
+  // • For a 50px-tall screw thread: 3% = 1.5 → min 5px → heals small gaps
+  // • For a 400px-tall motor: 3% = 12px → bridges reflective gaps inside
+  // • For a 200px-tall plier jaw: gap is ~80px, 3% = 6px → jaw preserved
+  let maskMinX = width, maskMinY = height, maskMaxX = 0, maskMaxY = 0;
+  for (let py = 0; py < height; py++) {
+    for (let px = 0; px < width; px++) {
+      if (mask[py * width + px]) {
+        if (px < maskMinX) maskMinX = px;
+        if (px > maskMaxX) maskMaxX = px;
+        if (py < maskMinY) maskMinY = py;
+        if (py > maskMaxY) maskMaxY = py;
+      }
+    }
+  }
+  const maskH = Math.max(1, maskMaxY - maskMinY);
+  const maskW = Math.max(1, maskMaxX - maskMinX);
+  const maskMinDim = Math.min(maskH, maskW);
+  const closeSize = Math.max(5, Math.min(15, Math.round(maskMinDim * 0.03)));
   const kCloseSize = closeSize % 2 === 0 ? closeSize + 1 : closeSize;
-  const openSize = Math.max(3, Math.round(minDim * 0.005));
+  const openSize = Math.max(3, Math.round(maskMinDim * 0.005));
   const kOpenSize = openSize % 2 === 0 ? openSize + 1 : openSize;
 
   const kClose = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(kCloseSize, kCloseSize));
@@ -1256,14 +1551,21 @@ function contourFromMask(mask: Uint8Array, width: number, height: number): Trace
   for (let i = 0; i < contours.size(); i++) {
     const c = contours.get(i);
     const a = cv.contourArea(c);
-    if (a > bestArea) { bestArea = a; best = c; }
+    if (a > bestArea) {
+      if (best) best.delete();
+      bestArea = a;
+      best = c;
+    } else {
+      c.delete();
+    }
   }
 
-  // Reject the mask if it is too large (more than 25% of the total image area)
+  // Reject the mask if it is too large (more than 70% of the total image area)
   // as it is likely a background bleed
-  const maxArea = width * height * 0.25;
+  const maxArea = width * height * 0.70;
   if (bestArea > maxArea) {
-    console.log(`contourFromMask: Rejecting contour with area ${Math.round(bestArea)} (exceeds 25% image area of ${Math.round(maxArea)})`);
+    console.log(`contourFromMask: Rejecting contour with area ${Math.round(bestArea)} (exceeds 70% image area of ${Math.round(maxArea)})`);
+    if (best) best.delete();
     deleteMats(m, kClose, kOpen, contours, hierarchy);
     return null;
   }
@@ -1287,13 +1589,21 @@ function contourFromMask(mask: Uint8Array, width: number, height: number): Trace
       for (let i = 1; i < cleanContours.size(); i++) {
         const c = cleanContours.get(i);
         const a = cv.contourArea(c);
-        if (a > cleanBestArea) { cleanBestArea = a; cleanBest = c; }
+        if (a > cleanBestArea) {
+          cleanBest.delete();
+          cleanBestArea = a;
+          cleanBest = c;
+        } else {
+          c.delete();
+        }
       }
       const confidence = contourConfidence(cleanBest);
       result = extractContourPoints(cleanBest, 0, 0, cleanBestArea, confidence);
+      cleanBest.delete();
     }
 
     deleteMats(mClean, tempVec, cleanContours, cleanHierarchy);
+    best.delete();
   }
 
   deleteMats(m, kClose, kOpen, contours, hierarchy);

@@ -279,12 +279,13 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
               />
             )}
             
-            {/* Main outline */}
+            {/* Main outline — filled like the competitor's solid green overlays */}
             <path
               d={path}
-              fill={isSelected ? `${outline.color}38` : `${outline.color}15`}
+              fill={isSelected ? `${outline.color}99` : `${outline.color}66`}
               stroke={outline.color}
-              strokeWidth={isSelected ? strokeWidth * 2 : strokeWidth}
+              strokeWidth={isSelected ? strokeWidth * 2.5 : strokeWidth * 1.5}
+              strokeLinejoin="round"
               onClick={(e) => handleOutlineClick(e, outline.id)}
               style={{ 
                 cursor: currentTool === 'select' ? 'pointer' : 
@@ -371,7 +372,7 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
                   />
                 ))}
 
-                {/* Label */}
+                {/* Label — shown for all tools, more prominent when selected */}
                 <text
                   x={outline.boundingBox.minX}
                   y={outline.boundingBox.minY - 8 / zoom}
@@ -382,6 +383,21 @@ export const TracingOverlay: React.FC<TracingOverlayProps> = ({
                   {outline.name}
                 </text>
               </>
+            )}
+
+            {/* Unselected label — always shown so tools are identifiable */}
+            {!isSelected && (
+              <text
+                x={outline.boundingBox.minX + 4 / zoom}
+                y={outline.boundingBox.minY + 14 / zoom}
+                fill={outline.color}
+                fontSize={10 / zoom}
+                fontWeight="600"
+                opacity={0.85}
+                style={{ pointerEvents: 'none' }}
+              >
+                {outline.name}
+              </text>
             )}
           </g>
         );

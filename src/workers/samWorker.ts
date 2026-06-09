@@ -101,11 +101,31 @@ async function ensureLoaded(id: string): Promise<void> {
 }
 
 // Compute the image embedding once (the expensive encoder pass).
-async function embed(id: string, url: string): Promise<void> {
+async function embed(
+  id: string,
+  url: string,
+  rgbaData?: Uint8Array | Uint8ClampedArray,
+  width?: number,
+  height?: number
+): Promise<void> {
   await ensureLoaded(id);
   if (session && session.url === url) return; // already embedded this image
 
-  let image = await RawImage.read(url);
+  let image: any;
+  if (rgbaData && width && height) {
+    const rgbData = new Uint8Array(width * height * 3);
+    for (let i = 0; i < width * height; i++) {
+      rgbData[i * 3] = rgbaData[i * 4];
+      rgbData[i * 3 + 1] = rgbaData[i * 4 + 1];
+      rgbData[i * 3 + 2] = rgbaData[i * 4 + 2];
+    }
+    image = new RawImage(rgbData, width, height, 3);
+    console.log(`[SAM] Embedded image from raw pixels: ${width}x${height}`);
+  } else {
+    image = await RawImage.read(url);
+    console.log(`[SAM] Embedded image from URL: ${url}`);
+  }
+
   const origW = image.width, origH = image.height;
   const procScale = Math.min(1, MAX_DIM / Math.max(origW, origH));
   if (procScale < 1) {
@@ -193,10 +213,11 @@ async function decodeAt(
       session.reshapedInputSizes
     );
   } else {
-    // SlimSAM path: take the first point (as it doesn't support multiple points easily in this layout)
-    const px = points[0][0];
-    const py = points[0][1];
-    promptInputs = await processor(session.image, { input_points: [[[px, py]]], input_labels: [[1]] });
+    // SlimSAM path with multi-point support
+    promptInputs = await processor(session.image, {
+      input_points: [points],
+      input_labels: [labels]
+    });
     outputs = await model({
       image_embeddings: session.embeddings.image_embeddings,
       image_positional_embeddings: session.embeddings.image_positional_embeddings,
@@ -263,6 +284,12 @@ async function decodeAt(
     }
   }
 
+  // Detailed debug logging
+  console.log(`[SAM] decodeAt mask selection info:`);
+  for (let i = 0; i < nMasks; i++) {
+    console.log(`  Mask ${i}: score=${scores[i].toFixed(4)}, area=${maskAreas[i]}${i === highestScoreIdx ? ' (highest score)' : ''}${i === best ? ' (SELECTED)' : ''}`);
+  }
+
   const off = best * H * W;
   const out = new Uint8Array(H * W);
   for (let i = 0; i < H * W; i++) out[i] = md[off + i] ? 255 : 0;
@@ -275,9 +302,12 @@ async function segmentPoint(
   id: string,
   url: string,
   clicks: { x: number; y: number; label: number }[],
-  paperCorners?: any
+  paperCorners?: any,
+  rgbaData?: Uint8Array | Uint8ClampedArray,
+  width?: number,
+  height?: number
 ): Promise<{ mask: ArrayBuffer; width: number; height: number; score: number; scale: number } | null> {
-  await embed(id, url);
+  await embed(id, url, rgbaData, width, height);
   if (!session) return null;
 
   const pts = clicks.map(c => [c.x * session!.procScale, c.y * session!.procScale] as [number, number]);
@@ -314,15 +344,18 @@ async function autoSegment(
   id: string,
   url: string,
   proposals: ToolProposal[],
-  paperCorners?: any
+  paperCorners?: any,
+  rgbaData?: Uint8Array | Uint8ClampedArray,
+  width?: number,
+  height?: number
 ): Promise<{ masks: { mask: ArrayBuffer; width: number; height: number; score: number }[]; scale: number }> {
-  await embed(id, url);
+  await embed(id, url, rgbaData, width, height);
   if (!session) return { masks: [], scale: 1 };
 
   const W0 = session.image.width, H0 = session.image.height;
   const origArea = (W0 * session.scaleToOriginal) * (H0 * session.scaleToOriginal);
-  const minArea = origArea * 0.0008;
-  const maxArea = origArea * 0.25;
+  const minArea = origArea * 0.0005;
+  const maxArea = origArea * 0.65; // Raised from 0.25: extruder screw spans ~62% of frame
 
   const results: { mask: ArrayBuffer; width: number; height: number; score: number }[] = [];
 
@@ -344,11 +377,18 @@ async function autoSegment(
 
     if (pts.length === 0) continue;
 
-    console.log(`[SAM] decoding proposal ${i}: points=${pts.length} (positives=${prop.positivePoints.length}, negatives=${prop.negativePoints.length})`);
+    console.log(`[SAM] decoding proposal ${i}: positives=${JSON.stringify(prop.positivePoints)}, negatives=${JSON.stringify(prop.negativePoints)}`);
 
     // Decode this proposal in a single pass with all positive + negative points
     const r = await decodeAt(pts, labels, paperCorners);
-    if (!r || r.score < 0.6) continue;
+    if (!r) {
+      console.log(`[SAM] proposal ${i} skipped: no decode result`);
+      continue;
+    }
+    if (r.score < 0.50) {
+      console.log(`[SAM] proposal ${i} skipped: score ${r.score.toFixed(4)} < 0.50`);
+      continue;
+    }
 
     // Validate size to avoid background bleed
     let maskArea = 0;
@@ -436,18 +476,18 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         result = { ready: true };
         break;
       case 'embed':
-        await embed(id, payload.url);
+        await embed(id, payload.url, payload.rgbaData, payload.width, payload.height);
         result = { embedded: true };
         break;
       case 'segmentPoint': {
         const clicks = payload.clicks || [{ x: payload.x, y: payload.y, label: 1 }];
-        const r = await segmentPoint(id, payload.url, clicks, payload.paperCorners);
+        const r = await segmentPoint(id, payload.url, clicks, payload.paperCorners, payload.rgbaData, payload.width, payload.height);
         if (r) { post({ id, type: 'success', payload: r }, [r.mask]); return; }
         result = null;
         break;
       }
       case 'autoSegment': {
-        const r = await autoSegment(id, payload.url, payload.proposals, payload.paperCorners);
+        const r = await autoSegment(id, payload.url, payload.proposals, payload.paperCorners, payload.rgbaData, payload.width, payload.height);
         post({ id, type: 'success', payload: r }, r.masks.map((m) => m.mask));
         return;
       }
