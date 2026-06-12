@@ -18,6 +18,7 @@ import {
   ArrowRight,
   X,
   PanelLeft,
+  LogOut,
 } from 'lucide-react';
 import {
   SidebarIcon,
@@ -26,6 +27,7 @@ import {
   useDashboardLayout,
 } from '@rapidtool/cad-ui';
 import { useAppStore, type WorkflowStep } from '../stores';
+import { useAuthStore } from '../stores/authStore';
 
 // ============================================================================
 // Constants
@@ -148,36 +150,65 @@ const PrerequisitesNotification: React.FC<PrerequisitesNotificationProps> = ({
 // User Profile Section
 // ============================================================================
 
-const UserProfile: React.FC<{ isExpanded: boolean }> = ({ isExpanded }) => (
-  <div
-    className={`
-      w-full flex items-center rounded-lg tech-transition
-      border border-[hsl(var(--border)/0.5)]
-      bg-[hsl(var(--muted)/0.3)] hover:bg-[hsl(var(--muted)/0.6)]
-      ${isExpanded ? 'gap-2.5 px-3 py-2' : 'justify-center px-2 py-2'}
-    `}
-    title="Sign in coming in Phase 2"
-  >
-    {/* Avatar placeholder */}
-    <div
-      className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
-      style={{ background: 'hsl(var(--muted))', border: '1px dashed hsl(var(--border))' }}
-    >
-      <User className="w-3 h-3 text-[hsl(var(--muted-foreground))]" />
-    </div>
+const UserProfile: React.FC<{ isExpanded: boolean }> = ({ isExpanded }) => {
+  const user = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
 
-    {isExpanded && (
-      <div className="flex-1 min-w-0">
-        <p className="text-[11px] font-medium text-[hsl(var(--muted-foreground))] truncate">
-          Guest
-        </p>
-        <p className="text-[10px] text-[hsl(var(--muted-foreground)/0.6)] truncate">
-          Sign in — coming soon
-        </p>
+  const displayName = user?.name || user?.email?.split('@')[0] || 'Guest';
+  const initials = (() => {
+    const src = (user?.name || user?.email || '').trim();
+    if (!src) return null;
+    const parts = src.split(/[\s@.]+/).filter(Boolean);
+    return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || src[0].toUpperCase();
+  })();
+
+  return (
+    <div
+      className={`
+        w-full flex items-center rounded-lg tech-transition
+        border border-[hsl(var(--border)/0.5)]
+        bg-[hsl(var(--muted)/0.3)] hover:bg-[hsl(var(--muted)/0.6)]
+        ${isExpanded ? 'gap-2.5 px-3 py-2' : 'justify-center px-2 py-2'}
+      `}
+      title={user?.email || 'Not signed in'}
+    >
+      {/* Avatar — initials when signed in, else placeholder icon */}
+      <div
+        className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-[10px] font-semibold"
+        style={
+          initials
+            ? { background: 'hsl(var(--primary))', color: 'hsl(var(--primary-foreground))' }
+            : { background: 'hsl(var(--muted))', border: '1px dashed hsl(var(--border))' }
+        }
+      >
+        {initials ?? <User className="w-3 h-3 text-[hsl(var(--muted-foreground))]" />}
       </div>
-    )}
-  </div>
-);
+
+      {isExpanded && (
+        <>
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-medium text-[hsl(var(--foreground))] truncate">
+              {displayName}
+            </p>
+            <p className="text-[10px] text-[hsl(var(--muted-foreground)/0.7)] truncate">
+              {user?.email || 'Not signed in'}
+            </p>
+          </div>
+          {user && (
+            <button
+              type="button"
+              onClick={() => { void logout(); }}
+              title="Sign out"
+              className="shrink-0 p-1 rounded-md text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.1)] tech-transition"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
 
 // ============================================================================
 // Main Sidebar Component
