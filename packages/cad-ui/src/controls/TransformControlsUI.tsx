@@ -39,24 +39,24 @@ interface ModeConfig {
 const MODES: readonly ModeConfig[] = [
   {
     mode: 'translate',
-    icon: '↔',
+    icon: '📦',
     label: 'MOVE',
-    activeColor: 'hsl(var(--primary))',
-    borderColor: 'hsl(var(--primary) / 0.5)',
+    activeColor: 'bg-blue-600',
+    borderColor: 'border-blue-400',
   },
   {
     mode: 'rotate',
-    icon: '↻',
+    icon: '🔄',
     label: 'ROTATE',
-    activeColor: 'hsl(142 76% 36%)',
-    borderColor: 'hsl(142 76% 36% / 0.5)',
+    activeColor: 'bg-green-600',
+    borderColor: 'border-green-400',
   },
   {
     mode: 'scale',
-    icon: '⤢',
+    icon: '📏',
     label: 'SCALE',
-    activeColor: 'hsl(var(--accent))',
-    borderColor: 'hsl(var(--accent) / 0.5)',
+    activeColor: 'bg-purple-600',
+    borderColor: 'border-purple-400',
   },
 ] as const;
 
@@ -77,22 +77,12 @@ const ModeButton: React.FC<ModeButtonProps> = React.memo(
       onClick={onClick}
       aria-pressed={isActive}
       aria-label={`${config.label} mode`}
-      style={isActive ? {
-        backgroundColor: config.activeColor,
-        borderColor: config.borderColor,
-        color: '#ffffff',
-        borderWidth: '2px',
-        borderStyle: 'solid',
-      } : {
-        backgroundColor: 'hsl(var(--muted))',
-        borderColor: 'hsl(var(--border))',
-        color: 'hsl(var(--muted-foreground))',
-        borderWidth: '1px',
-        borderStyle: 'solid',
-      }}
       className={cn(
         'px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200',
-        'cursor-pointer select-none hover:scale-105',
+        'cursor-pointer select-none transform hover:scale-105',
+        isActive
+          ? `${config.activeColor} text-white shadow-md border-2 ${config.borderColor}`
+          : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600'
       )}
     >
       {config.icon} {config.label}
@@ -141,14 +131,7 @@ const TransformControlsUI: React.FC<TransformControlsUIProps> = ({
       aria-label="Transform mode selection"
       className="absolute top-5 left-1/2 -translate-x-1/2 z-[1000] pointer-events-auto"
     >
-      <div
-        className="flex gap-2 text-sm p-3 rounded-lg shadow-lg backdrop-blur-sm"
-        style={{
-          backgroundColor: 'hsl(var(--card) / 0.95)',
-          border: '1px solid hsl(var(--border))',
-          color: 'hsl(var(--foreground))',
-        }}
-      >
+      <div className="flex gap-2 bg-black/95 text-white text-sm p-3 rounded-lg border border-gray-600 shadow-lg backdrop-blur-sm">
         {modeButtons}
       </div>
     </div>

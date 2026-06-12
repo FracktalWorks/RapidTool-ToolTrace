@@ -172,12 +172,12 @@ function processSingleSubtraction(
   const supportBrush = new Brush(supportGeometry);
   supportBrush.updateMatrixWorld();
   // Prepare BVH and half-edge structures for CSG
-  supportBrush.prepareGeometry();
+  supportBrush.prepareGeometry(BVH_OPTIONS);
   
   const cutterBrush = new Brush(cutterGeometry);
   cutterBrush.updateMatrixWorld();
   // Prepare BVH and half-edge structures for CSG
-  cutterBrush.prepareGeometry();
+  cutterBrush.prepareGeometry(BVH_OPTIONS);
   
   // Perform CSG subtraction
   const resultBrush = evaluator.evaluate(supportBrush, cutterBrush, SUBTRACTION);
@@ -218,7 +218,7 @@ function processBatchSubtraction(
   cutterBrush.updateMatrixWorld();
   // IMPORTANT: Prepare BVH and half-edge structures upfront for the cutter
   // This builds the MeshBVH once for reuse across all support subtractions
-  cutterBrush.prepareGeometry();
+  cutterBrush.prepareGeometry(BVH_OPTIONS);
   
   const results: CSGWorkerOutput['batchData'] = [];
   
@@ -237,7 +237,7 @@ function processBatchSubtraction(
       const supportBrush = new Brush(supportGeometry);
       supportBrush.updateMatrixWorld();
       // Prepare BVH for each support
-      supportBrush.prepareGeometry();
+      supportBrush.prepareGeometry(BVH_OPTIONS);
       
       // Perform CSG subtraction
       const resultBrush = evaluator.evaluate(supportBrush, cutterBrush, SUBTRACTION);
@@ -427,7 +427,7 @@ function processBatchCSGUnion(
     const geom = geometries[0];
     return {
       positions: new Float32Array(geom.positions),
-      normals: new Float32Array(geom.normals || new Array(geom.positions.length).fill(0)),
+      normals: new Float32Array(geom.normals || geom.positions.length),
       indices: new Uint32Array(geom.indices || Array.from({ length: geom.positions.length / 3 }, (_, i) => i)),
       vertexCount: geom.positions.length / 3,
       triangleCount: (geom.indices?.length || geom.positions.length / 3) / 3
@@ -448,7 +448,7 @@ function processBatchCSGUnion(
   
   let accumulatedBrush = new Brush(accumulatedGeometry);
   accumulatedBrush.updateMatrixWorld();
-  accumulatedBrush.prepareGeometry();
+  accumulatedBrush.prepareGeometry(BVH_OPTIONS);
   
   // Progressively union each geometry with the accumulated result
   for (let i = 1; i < geometries.length; i++) {
@@ -467,7 +467,7 @@ function processBatchCSGUnion(
       
       const nextBrush = new Brush(nextGeometry);
       nextBrush.updateMatrixWorld();
-      nextBrush.prepareGeometry();
+      nextBrush.prepareGeometry(BVH_OPTIONS);
       
       // Perform CSG union (ADDITION)
       const resultBrush = evaluator.evaluate(accumulatedBrush, nextBrush, ADDITION);
@@ -491,7 +491,7 @@ function processBatchCSGUnion(
         accumulatedBrush = new Brush(mergedGeometry);
         accumulatedBrush.updateMatrixWorld();
         // Prepare geometry for the next CSG operation
-        accumulatedBrush.prepareGeometry();
+        accumulatedBrush.prepareGeometry(BVH_OPTIONS);
       } else {
         console.warn(`[processBatchCSGUnion] CSG union failed for geometry ${geom.id}, skipping`);
       }

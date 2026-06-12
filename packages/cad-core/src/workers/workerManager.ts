@@ -1,7 +1,27 @@
-// ============================================
-// Worker Manager
-// Utility for managing web workers for heavy computations
-// ============================================
+/**
+ * Worker Manager
+ *
+ * Manages three persistent web worker pools: CSG, clamp CSG, hole CSG.
+ *
+ * Geometry transfer strategy — two modes:
+ *
+ *   CLONE mode  (extractGeometryForWorker, serializeGeometryForClamp/HoleWorker)
+ *     Used when the source geometry is still live in the THREE.js scene and will
+ *     continue to be rendered after the worker call (design phase: support trim,
+ *     clamp CSG, hole CSG). new Float32Array(src.array) copies bytes; both the
+ *     scene and the worker have valid data simultaneously.
+ *
+ *   TRANSFER mode  (performRealCSGUnionInWorker)
+ *     Used on the export path only. The geometries sent here are ephemeral copies
+ *     built by exportService — they are NOT rendered after this call. Transferring
+ *     the underlying ArrayBuffer moves ownership to the worker with zero allocation.
+ *     After postMessage the main-thread views are neutered (byteLength === 0).
+ *     On a 100 MB model this cuts peak memory from ~200 MB to ~100 MB.
+ *
+ * Worker crash recovery:
+ *   All onerror handlers null the worker reference so the next getXxxWorker()
+ *   call spawns a fresh instance instead of silently reusing a dead one.
+ */
 
 import type { CSGWorkerInput, CSGWorkerOutput } from './csgWorker';
 import CsgWorker from './csgWorker?worker';
@@ -58,12 +78,12 @@ function getCSGWorker(): Worker {
     };
 
     csgWorker.onerror = (error) => {
-      console.error('[CSGWorker] Error:', error);
-      // Reject all pending promises
-      csgWorkerPromises.forEach((promise) => {
-        promise.reject(error);
-      });
+      console.error('[CSGWorker] Crashed:', error);
+      csgWorkerPromises.forEach((promise) => promise.reject(error));
       csgWorkerPromises.clear();
+      // Null out so getCSGWorker() spawns a fresh instance on the next call.
+      // Without this, every subsequent job silently uses the dead worker.
+      csgWorker = null;
     };
   }
 
@@ -74,24 +94,32 @@ function getCSGWorker(): Worker {
  * Generate unique ID for worker requests
  */
 function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
 /**
- * Extract geometry data for transfer to worker
+ * Extract geometry data for transfer to a worker — CLONE mode.
+ *
+ * Intentional copies: this is called on the design path (support trim,
+ * batch subtraction) where the source geometry is still live in the scene
+ * and must remain valid after the worker call. Do NOT change to transfer
+ * mode here — it would neuter the scene geometry and corrupt rendering.
+ *
+ * For the export path use performRealCSGUnionInWorker (transfer mode).
  */
 export function extractGeometryForWorker(geometry: THREE.BufferGeometry): {
   positions: Float32Array;
   normals: Float32Array;
   indices: Uint32Array;
 } {
-  const posAttr = geometry.getAttribute('position');
+  const posAttr  = geometry.getAttribute('position');
   const normAttr = geometry.getAttribute('normal');
   const indexAttr = geometry.index;
 
+  // Intentional clones — source geometry stays alive in the scene.
   const positions = new Float32Array(posAttr.array);
-  const normals = normAttr ? new Float32Array(normAttr.array) : new Float32Array(0);
-  const indices = indexAttr ? new Uint32Array(indexAttr.array) : new Uint32Array(0);
+  const normals   = normAttr ? new Float32Array(normAttr.array) : new Float32Array(0);
+  const indices   = indexAttr ? new Uint32Array(indexAttr.array) : new Uint32Array(0);
 
   return { positions, normals, indices };
 }
@@ -289,48 +317,11 @@ export async function performBatchCSGUnionInWorker(
   baseplateGeometry?: THREE.BufferGeometry,
   onProgress?: (current: number, total: number, stage: string) => void
 ): Promise<THREE.BufferGeometry | null> {
-  console.log('[performBatchCSGUnionInWorker] Starting union with', geometries.length, 'geometries');
-
-  // Log each geometry being sent
-  geometries.forEach((g, i) => {
-    const pos = g.geometry.getAttribute('position');
-    const norm = g.geometry.getAttribute('normal');
-    const idx = g.geometry.index;
-    console.log(`[performBatchCSGUnionInWorker] Geometry ${i} (${g.id}):`, {
-      hasPosition: !!pos,
-      positionCount: pos?.count || 0,
-      hasNormal: !!norm,
-      normalCount: norm?.count || 0,
-      hasIndex: !!idx,
-      indexCount: idx?.count || 0
-    });
-  });
-
   const worker = getCSGWorker();
   const id = generateId();
 
-  // Prepare geometries for transfer
-  const geometriesData = geometries.map(g => {
-    const extracted = extractGeometryForWorker(g.geometry);
-    console.log(`[performBatchCSGUnionInWorker] Extracted ${g.id}:`, {
-      positionsLength: extracted.positions.length,
-      normalsLength: extracted.normals.length,
-      indicesLength: extracted.indices.length
-    });
-    return {
-      id: g.id,
-      ...extracted
-    };
-  });
-
+  const geometriesData = geometries.map(g => ({ id: g.id, ...extractGeometryForWorker(g.geometry) }));
   const baseplateData = baseplateGeometry ? extractGeometryForWorker(baseplateGeometry) : undefined;
-  if (baseplateData) {
-    console.log('[performBatchCSGUnionInWorker] Baseplate data:', {
-      positionsLength: baseplateData.positions.length,
-      normalsLength: baseplateData.normals.length,
-      indicesLength: baseplateData.indices.length
-    });
-  }
 
   // Set up progress handler
   const progressHandler = (e: MessageEvent<CSGWorkerOutput>) => {
@@ -407,7 +398,7 @@ export function performRealCSGUnionInWorker(
   onProgress?: (current: number, total: number, stage: string) => void
 ): Promise<THREE.BufferGeometry | null> {
   return new Promise((resolve, reject) => {
-    const id = `csg-real-union-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const id = `csg-real-union-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
     // Get or create worker
     const worker = getCSGWorker();
@@ -424,35 +415,39 @@ export function performRealCSGUnionInWorker(
     }> = [];
     const transferables: Transferable[] = [];
 
+    // TRANSFER MODE — export path only.
+    // Geometries here are ephemeral copies built by exportService; the main
+    // thread does not render them after this call. We grab direct references
+    // (no copy) and transfer their ArrayBuffers to the worker.
+    // Indices: Uint16→Uint32 conversion is kept because the worker expects Uint32.
+    // Positions & normals: direct reference — saves ~2× peak memory on large models.
     for (const { id: geomId, geometry } of geometries) {
       const positionAttr = geometry.getAttribute('position');
-      const normalAttr = geometry.getAttribute('normal');
-      const indexAttr = geometry.index;
+      const normalAttr   = geometry.getAttribute('normal');
+      const indexAttr    = geometry.index;
 
       if (!positionAttr || !normalAttr) {
-        console.warn(`Geometry ${geomId} missing position or normal attributes, skipping`);
+        console.warn(`[WorkerManager] Geometry ${geomId} missing position or normal — skipping`);
         continue;
       }
 
-      // Clone the arrays so we can transfer them
-      const positions = new Float32Array(positionAttr.array);
-      const normals = new Float32Array(normalAttr.array);
-      const indices = indexAttr ? new Uint32Array(indexAttr.array) : null;
+      // Direct references — no allocation.
+      const positions = positionAttr.array as Float32Array;
+      const normals   = normalAttr.array  as Float32Array;
+      // Indices may be Uint16 in older THREE.js geometries; worker expects Uint32.
+      const indices = indexAttr
+        ? (indexAttr.array instanceof Uint32Array
+            ? indexAttr.array
+            : new Uint32Array(indexAttr.array))
+        : null;
 
-      geometriesData.push({
-        id: geomId,
-        positions,
-        normals,
-        indices
-      });
+      geometriesData.push({ id: geomId, positions, normals, indices });
 
       transferables.push(positions.buffer, normals.buffer);
-      if (indices) {
-        transferables.push(indices.buffer);
-      }
+      if (indices) transferables.push(indices.buffer);
     }
 
-    // Convert baseplate geometry if provided
+    // Convert baseplate geometry if provided — same transfer strategy.
     let baseplateData: {
       positions: Float32Array;
       normals: Float32Array;
@@ -461,20 +456,22 @@ export function performRealCSGUnionInWorker(
 
     if (baseplateGeometry) {
       const positionAttr = baseplateGeometry.getAttribute('position');
-      const normalAttr = baseplateGeometry.getAttribute('normal');
-      const indexAttr = baseplateGeometry.index;
+      const normalAttr   = baseplateGeometry.getAttribute('normal');
+      const indexAttr    = baseplateGeometry.index;
 
       if (positionAttr && normalAttr) {
-        const positions = new Float32Array(positionAttr.array);
-        const normals = new Float32Array(normalAttr.array);
-        const indices = indexAttr ? new Uint32Array(indexAttr.array) : null;
+        const positions = positionAttr.array as Float32Array;
+        const normals   = normalAttr.array  as Float32Array;
+        const indices   = indexAttr
+          ? (indexAttr.array instanceof Uint32Array
+              ? indexAttr.array
+              : new Uint32Array(indexAttr.array))
+          : null;
 
         baseplateData = { positions, normals, indices };
 
         transferables.push(positions.buffer, normals.buffer);
-        if (indices) {
-          transferables.push(indices.buffer);
-        }
+        if (indices) transferables.push(indices.buffer);
       }
     }
 
@@ -578,11 +575,10 @@ function getClampCSGWorker(): Worker {
     };
 
     clampCSGWorker.onerror = (error) => {
-      console.error('[ClampCSGWorker] Error:', error);
-      clampCSGWorkerPromises.forEach((promise) => {
-        promise.reject(new Error('Worker error'));
-      });
+      console.error('[ClampCSGWorker] Crashed:', error);
+      clampCSGWorkerPromises.forEach((promise) => promise.reject(new Error('Worker error')));
       clampCSGWorkerPromises.clear();
+      clampCSGWorker = null;
     };
   }
 
@@ -590,7 +586,10 @@ function getClampCSGWorker(): Worker {
 }
 
 /**
- * Serialize a BufferGeometry for transfer to worker
+ * Serialize a BufferGeometry for the clamp CSG worker — CLONE mode.
+ *
+ * The support/cutout geometry is still live in the scene; cloning ensures
+ * the scene mesh remains valid while the worker runs.
  */
 export function serializeGeometryForClampWorker(geometry: THREE.BufferGeometry): {
   positions: Float32Array;
@@ -729,11 +728,10 @@ function getHoleCSGWorker(): Worker {
     };
 
     holeCSGWorker.onerror = (error) => {
-      console.error('[HoleCSGWorker] Error:', error);
-      holeCSGWorkerPromises.forEach((promise) => {
-        promise.reject(error);
-      });
+      console.error('[HoleCSGWorker] Crashed:', error);
+      holeCSGWorkerPromises.forEach((promise) => promise.reject(error));
       holeCSGWorkerPromises.clear();
+      holeCSGWorker = null;
     };
   }
 
@@ -741,7 +739,10 @@ function getHoleCSGWorker(): Worker {
 }
 
 /**
- * Serialize geometry for hole CSG worker
+ * Serialize geometry for the hole CSG worker — CLONE mode.
+ *
+ * The baseplate is still rendered on-screen during hole subtraction; cloning
+ * keeps the scene geometry intact while the worker processes the operation.
  */
 function serializeGeometryForHoleWorker(geometry: THREE.BufferGeometry): {
   positions: Float32Array;

@@ -69,8 +69,8 @@ const baseStyles: Record<string, React.CSSProperties> = {
   container: {
     padding: '8px',
     borderRadius: '8px',
-    backgroundColor: 'hsl(var(--warning) / 0.08)',
-    border: '1px solid hsl(var(--warning) / 0.25)',
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    border: '1px solid rgba(245, 158, 11, 0.3)',
   },
   button: {
     display: 'flex',
@@ -84,7 +84,7 @@ const baseStyles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: 500,
-    color: 'hsl(var(--warning))',
+    color: 'rgb(217, 119, 6)',
     transition: 'background-color 0.15s ease',
   },
   badge: {
@@ -92,9 +92,9 @@ const baseStyles: Record<string, React.CSSProperties> = {
     fontSize: '10px',
     padding: '0 6px',
     borderRadius: '9999px',
-    backgroundColor: 'hsl(var(--warning) / 0.15)',
-    color: 'hsl(var(--warning))',
-    border: '1px solid hsl(var(--warning) / 0.35)',
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    color: 'rgb(217, 119, 6)',
+    border: '1px solid rgba(245, 158, 11, 0.4)',
     lineHeight: '18px',
     pointerEvents: 'none',
     whiteSpace: 'nowrap',
@@ -119,7 +119,7 @@ export const SkipStep: React.FC<SkipStepProps> = ({
   const buttonStyle: React.CSSProperties = {
     ...baseStyles.button,
     ...(hovered && !disabled
-      ? { backgroundColor: 'hsl(var(--warning) / 0.12)' }
+      ? { backgroundColor: 'rgba(245, 158, 11, 0.15)' }
       : {}),
     ...(disabled
       ? { opacity: 0.5, cursor: 'not-allowed' }

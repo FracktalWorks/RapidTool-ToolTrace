@@ -1,13 +1,14 @@
 // ============================================
 // Offset Mesh Web Worker
-// Handles CPU-intensive mesh generation from heightmap data
+// Handles mesh generation from heightmap data AND full pipeline from geometry
 // ============================================
 
 import * as THREE from 'three';
 import { createWatertightMeshFromHeightmap } from '../offset/meshGenerator';
 import { fillMeshHoles, analyzeMeshHoles } from '../offset/meshHoleFiller';
+import { createOffsetMesh } from '../offset/offsetMeshProcessor';
 
-// Message types
+// ── generate-mesh: mesh from pre-computed heightmap ──────────────────────────
 export interface OffsetMeshWorkerInput {
   type: 'generate-mesh';
   id: string;
@@ -44,6 +45,41 @@ export interface OffsetMeshWorkerOutput {
     total: number;
     stage: string;
   };
+  error?: string;
+}
+
+// ── generate-from-geometry: full pipeline (WebGL heightmap + mesh) ────────────
+export interface OffsetGeometryWorkerInput {
+  type: 'generate-from-geometry';
+  id: string;
+  data: {
+    vertices: Float32Array;
+    options: {
+      offsetDistance: number;
+      pixelsPerUnit: number;
+      tileSize?: number;
+      rotationXZ?: number;
+      rotationYZ?: number;
+      fillHoles?: boolean;
+    };
+  };
+}
+
+export interface OffsetGeometryWorkerOutput {
+  type: 'geometry-result' | 'geometry-progress' | 'geometry-error';
+  id: string;
+  data?: {
+    positions: Float32Array;
+    normals: Float32Array;
+    indices: Uint32Array;
+    metadata: {
+      triangleCount: number;
+      vertexCount: number;
+      processingTime: number;
+      resolution: number;
+    };
+  };
+  progress?: { current: number; total: number; stage: string };
   error?: string;
 }
 
@@ -148,33 +184,27 @@ function processMeshGeneration(input: OffsetMeshWorkerInput['data']): OffsetMesh
 }
 
 // Worker message handler
-self.onmessage = (e: MessageEvent<OffsetMeshWorkerInput>) => {
-  const { type, id, data } = e.data;
-  
+self.onmessage = async (e: MessageEvent<OffsetMeshWorkerInput | OffsetGeometryWorkerInput>) => {
+  const { type, id } = e.data;
+
+  // ── generate-mesh: mesh from pre-computed heightmap ──────────────────────
   if (type === 'generate-mesh') {
+    const data = (e.data as OffsetMeshWorkerInput).data;
     try {
-      // Send progress update
       (self as unknown as Worker).postMessage({
         type: 'progress',
         id,
         progress: { current: 0, total: 100, stage: 'Starting mesh generation...' }
       } as OffsetMeshWorkerOutput);
-      
+
       const result = processMeshGeneration(data);
-      
       const transferables: Transferable[] = [
         result.positions.buffer as ArrayBuffer,
         result.normals.buffer as ArrayBuffer,
         result.indices.buffer as ArrayBuffer
       ];
-      
-      // Send result with transferable arrays
       (self as unknown as Worker).postMessage(
-        {
-          type: 'mesh-result',
-          id,
-          data: result
-        } as OffsetMeshWorkerOutput,
+        { type: 'mesh-result', id, data: result } as OffsetMeshWorkerOutput,
         transferables
       );
     } catch (error) {
@@ -183,6 +213,69 @@ self.onmessage = (e: MessageEvent<OffsetMeshWorkerInput>) => {
         id,
         error: error instanceof Error ? error.message : String(error)
       } as OffsetMeshWorkerOutput);
+    }
+  }
+
+  // ── generate-from-geometry: full pipeline via OffscreenCanvas ────────────
+  if (type === 'generate-from-geometry') {
+    const { vertices, options } = (e.data as OffsetGeometryWorkerInput).data;
+
+    // OffscreenCanvas backs the WebGL renderer — no DOM canvas needed.
+    const offscreenCanvas = new OffscreenCanvas(1, 1);
+
+    try {
+      const result = await createOffsetMesh(vertices, {
+        ...options,
+        canvas: offscreenCanvas,
+        progressCallback: (current: number, total: number, stage: string) => {
+          (self as unknown as Worker).postMessage({
+            type: 'geometry-progress',
+            id,
+            progress: { current, total, stage },
+          } as OffsetGeometryWorkerOutput);
+        },
+      });
+
+      if (!result.geometry) throw new Error('Pipeline returned no geometry');
+
+      const posAttr = result.geometry.getAttribute('position');
+      const normAttr = result.geometry.getAttribute('normal');
+      const idxAttr  = result.geometry.index!;
+
+      // Copy so the buffers are transferable (geometry may use shared views)
+      const positions = new Float32Array(posAttr.array);
+      const normals   = new Float32Array(normAttr.array);
+      const indices   = new Uint32Array(idxAttr.array);
+
+      result.geometry.dispose();
+
+      const out: OffsetGeometryWorkerOutput = {
+        type: 'geometry-result',
+        id,
+        data: {
+          positions,
+          normals,
+          indices,
+          metadata: {
+            triangleCount:   result.metadata.triangleCount,
+            vertexCount:     result.metadata.vertexCount,
+            processingTime:  result.metadata.processingTime,
+            resolution:      result.metadata.resolution,
+          },
+        },
+      };
+
+      (self as unknown as Worker).postMessage(out, [
+        positions.buffer as ArrayBuffer,
+        normals.buffer   as ArrayBuffer,
+        indices.buffer   as ArrayBuffer,
+      ]);
+    } catch (error) {
+      (self as unknown as Worker).postMessage({
+        type: 'geometry-error',
+        id,
+        error: error instanceof Error ? error.message : String(error),
+      } as OffsetGeometryWorkerOutput);
     }
   }
 };

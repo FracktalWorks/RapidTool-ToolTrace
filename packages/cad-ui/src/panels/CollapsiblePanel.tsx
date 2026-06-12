@@ -201,7 +201,7 @@ export const CollapsiblePanel: React.FC<CollapsiblePanelProps> = ({
         }}
         onMouseEnter={(e) => {
           if (!disabled) {
-            e.currentTarget.style.backgroundColor = 'hsl(var(--muted))';
+            e.currentTarget.style.backgroundColor = 'var(--accent, rgba(0, 0, 0, 0.04))';
           }
         }}
         onMouseLeave={(e) => {

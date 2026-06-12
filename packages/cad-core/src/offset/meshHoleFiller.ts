@@ -188,13 +188,18 @@ function addToSpatialHash(
 
 function findBoundaryEdges(vertices: Float32Array, vertexToUnique: Map<number, number>): Edge[] {
   const edgeCount = new Map<string, { count: number; edge: Edge }>();
-  const numTriangles = vertices.length / 9;
+  // Use Math.floor to avoid iterating a partial last triangle when
+  // vertices.length is not exactly divisible by 9.
+  const numTriangles = Math.floor(vertices.length / 9);
 
   for (let t = 0; t < numTriangles; t++) {
     const baseIdx = t * 3;
-    const v0 = vertexToUnique.get(baseIdx)!;
-    const v1 = vertexToUnique.get(baseIdx + 1)!;
-    const v2 = vertexToUnique.get(baseIdx + 2)!;
+    const v0 = vertexToUnique.get(baseIdx);
+    const v1 = vertexToUnique.get(baseIdx + 1);
+    const v2 = vertexToUnique.get(baseIdx + 2);
+
+    // Skip if any vertex index is missing (malformed/incomplete triangle)
+    if (v0 === undefined || v1 === undefined || v2 === undefined) continue;
 
     const positions = [
       getPosition(vertices, baseIdx),
@@ -305,6 +310,7 @@ function traceLoop(
   let next = firstNeighbor;
   const maxIterations = adjacency.size + 1;
 
+  if (!uniqueVertices[current]) return null;
   loopIndices.push(current);
   loopVertices.push(uniqueVertices[current].clone());
 
@@ -312,6 +318,7 @@ function traceLoop(
     const edgeKey = getEdgeKey(current, next);
     if (usedEdges.has(edgeKey)) break;
 
+    if (!uniqueVertices[next]) break;
     loopEdges.push(edgeKey);
     loopIndices.push(next);
     loopVertices.push(uniqueVertices[next].clone());

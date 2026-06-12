@@ -23,6 +23,8 @@ export interface OffsetMeshOptions {
   fillHoles?: boolean;
   /** Progress callback (current, total, stage) */
   progressCallback?: ((current: number, total: number, stage: string) => void) | null;
+  /** OffscreenCanvas for WebGL rendering in a Web Worker context (optional) */
+  canvas?: OffscreenCanvas;
 }
 
 export interface OffsetMeshMetadata {

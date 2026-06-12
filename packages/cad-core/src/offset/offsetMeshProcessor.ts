@@ -57,6 +57,7 @@ interface ProcessingOptions {
   rotationYZ: number;
   fillHoles: boolean;
   progressCallback: ProgressCallback | null;
+  canvas?: OffscreenCanvas;
 }
 
 // ============================================
@@ -246,7 +247,8 @@ const generateHeightmap = async (
   offsetDistance: number,
   resolution: number,
   tileSize: number,
-  progressCallback: ProgressCallback | null
+  progressCallback: ProgressCallback | null,
+  canvas?: OffscreenCanvas
 ): Promise<HeightmapResult> => {
   reportProgress(progressCallback, PROGRESS.HEIGHTMAP_START, 'Generating heightmap');
   await yieldToBrowser();
@@ -261,7 +263,7 @@ const generateHeightmap = async (
         }
       : null;
 
-  return createOffsetHeightMap(vertices, offsetDistance, resolution, tileSize, tileProgressCallback);
+  return createOffsetHeightMap(vertices, offsetDistance, resolution, tileSize, tileProgressCallback, canvas);
 };
 
 /**
@@ -339,6 +341,7 @@ export async function createOffsetMesh(
     rotationYZ: options.rotationYZ ?? 0,
     fillHoles: options.fillHoles ?? true,
     progressCallback: options.progressCallback ?? null,
+    canvas: options.canvas,
   };
 
   const startTime = performance.now();
@@ -404,7 +407,8 @@ export async function createOffsetMesh(
       config.offsetDistance,
       resolution,
       config.tileSize,
-      config.progressCallback
+      config.progressCallback,
+      config.canvas
     );
     result.heightmapResult = heightmapResult as HeightmapResult;
 

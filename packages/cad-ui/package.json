@@ -33,9 +33,6 @@
   "peerDependencies": {
     "@react-three/drei": "^9.0.0",
     "@react-three/fiber": "^8.0.0",
-    "@types/react": "^19.2.5",
-    "@types/react-dom": "^19.2.3",
-    "@types/three": "^0.182.0",
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
     "three": ">=0.160.0"
@@ -53,6 +50,9 @@
   },
   "devDependencies": {
     "@react-three/fiber": "^8.0.0",
+    "@types/react": "^18.3.23",
+    "@types/react-dom": "^18.3.7",
+    "@types/three": "^0.180.0",
     "typescript": "^5.6.3"
   },
   "keywords": [

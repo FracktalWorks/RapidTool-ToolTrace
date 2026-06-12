@@ -19,21 +19,11 @@ export interface LoadingOverlayProps extends Omit<LoadingIndicatorProps, 'style'
   backdropColor?: string;
   /** Whether to blur the background */
   blur?: boolean;
-  /** Positioning mode - 'fixed' for full viewport, 'absolute' for container-relative */
-  positioning?: 'fixed' | 'absolute';
 }
 
 const overlayStyles: Record<string, React.CSSProperties> = {
-  fixed: {
+  overlay: {
     position: 'fixed',
-    inset: 0,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    transition: 'opacity 0.2s ease-in-out',
-  },
-  absolute: {
-    position: 'absolute',
     inset: 0,
     display: 'flex',
     alignItems: 'center',
@@ -47,7 +37,6 @@ export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
   zIndex = 50,
   backdropColor = 'rgba(0, 0, 0, 0.5)',
   blur = true,
-  positioning = 'fixed',
   ...indicatorProps
 }) => {
   if (!isVisible) return null;
@@ -55,7 +44,7 @@ export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
   return (
     <div
       style={{
-        ...overlayStyles[positioning],
+        ...overlayStyles.overlay,
         zIndex,
         backgroundColor: backdropColor,
         backdropFilter: blur ? 'blur(4px)' : undefined,

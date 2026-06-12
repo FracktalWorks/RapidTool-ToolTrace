@@ -46,3 +46,6 @@ export * from './export';
 
 // Workers
 export * from './workers';
+
+// Compute (cache + artifact keys)
+export * from './compute';

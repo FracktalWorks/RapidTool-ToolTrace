@@ -28,3 +28,6 @@ scratch/
 
 # Status report (not app source)
 *.docx
+
+# TS build artifacts
+*.tsbuildinfo

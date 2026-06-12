@@ -157,7 +157,7 @@ function ToolButton<T extends string>({
       }}
       onMouseEnter={(e) => {
         if (!isActive && !item.disabled) {
-          e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.1)';
+          e.currentTarget.style.backgroundColor = 'var(--accent, rgba(59, 130, 246, 0.1))';
           e.currentTarget.style.color = 'var(--primary, #3b82f6)';
         }
       }}

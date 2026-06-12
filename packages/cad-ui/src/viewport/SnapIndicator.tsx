@@ -39,7 +39,7 @@ const SnapIndicator: React.FC<SnapIndicatorProps> = ({
 
   // Create snap lines (for grid alignment)
   const snapLines = useMemo(() => {
-    const lines: React.ReactElement[] = [];
+    const lines: JSX.Element[] = [];
 
     // Add grid lines around cursor
     const gridSize = 5;

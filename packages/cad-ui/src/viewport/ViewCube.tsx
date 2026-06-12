@@ -9,10 +9,10 @@ interface ViewCubeProps {
 
 const ViewCube: React.FC<ViewCubeProps> = ({ onViewChange, className = '', size = 120 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const cameraRef = useRef<THREE.Camera | null>(null);
-  const cubeRef = useRef<THREE.Group | null>(null);
+  const sceneRef = useRef<THREE.Scene>();
+  const rendererRef = useRef<THREE.WebGLRenderer>();
+  const cameraRef = useRef<THREE.Camera>();
+  const cubeRef = useRef<THREE.Group>();
   const [hoveredFace, setHoveredFace] = useState<string | null>(null);
   const [hoveredArrow, setHoveredArrow] = useState<string | null>(null);
   const [activeFace, setActiveFace] = useState<string | null>(null);
@@ -236,7 +236,7 @@ const ViewCube: React.FC<ViewCubeProps> = ({ onViewChange, className = '', size 
     ];
     const overlaySize = 0.9; // slightly inset
     faces.forEach(f => {
-      const mat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0, depthTest: true, depthWrite: false });
+      const mat = new THREE.MeshBasicMaterial({ color: 0x0891b2, transparent: true, opacity: 0, depthTest: true, depthWrite: false });
       const plane = new THREE.PlaneGeometry(overlaySize, overlaySize);
       const overlay = new THREE.Mesh(plane, mat);
 
@@ -262,7 +262,7 @@ const ViewCube: React.FC<ViewCubeProps> = ({ onViewChange, className = '', size 
         -half,  half, 0,  -half, -half, 0,
       ]);
       outlineGeom.setAttribute('position', new THREE.BufferAttribute(outlinePositions, 3));
-      const outlineMat = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0, depthTest: true, depthWrite: false });
+      const outlineMat = new THREE.LineBasicMaterial({ color: 0x0891b2, transparent: true, opacity: 0, depthTest: true, depthWrite: false });
       const outline = new THREE.LineSegments(outlineGeom, outlineMat);
       outline.quaternion.copy(overlay.quaternion);
       outline.position.copy(overlay.position);

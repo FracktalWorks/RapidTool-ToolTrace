@@ -453,7 +453,7 @@ function addFullQuad(
   bIdx: number,
   cIdx: number,
   dIdx: number,
-  indicesList: number[]
+  indicesList: number[] 
 ): void {
   const va = validVertices[aIdx];
   const vb = validVertices[bIdx];

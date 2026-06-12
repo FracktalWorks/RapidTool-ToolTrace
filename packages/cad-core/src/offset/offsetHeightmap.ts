@@ -188,12 +188,17 @@ void main() {
 let offsetRenderer = null;
 const renderTargetCache = new Map();
 
-function getOffsetRenderer() {
+function getOffsetRenderer(canvas?: OffscreenCanvas) {
     if (!offsetRenderer) {
-        offsetRenderer = new THREE.WebGLRenderer({ 
+        // In a Web Worker context there is no DOM, so THREE.WebGLRenderer must be
+        // given an OffscreenCanvas explicitly.  On the main thread no canvas is
+        // needed and THREE creates its own internal canvas element.
+        const rendererOptions: Record<string, unknown> = {
             antialias: false,
-            powerPreference: 'high-performance'
-        });
+            powerPreference: 'high-performance',
+        };
+        if (canvas) rendererOptions.canvas = canvas;
+        offsetRenderer = new THREE.WebGLRenderer(rendererOptions);
         offsetRenderer.setPixelRatio(1);
     }
     return offsetRenderer;
@@ -813,8 +818,8 @@ function applyMorphologicalClosing(heightMap, resolution, iterations = 5, kernel
 // Core Heightmap Generation Functions
 // ============================================
 
-function createSinglePassHeightMap(vertices, offset, resolution) {
-    const renderer = getOffsetRenderer();
+function createSinglePassHeightMap(vertices, offset, resolution, canvas?) {
+    const renderer = getOffsetRenderer(canvas);
     const startTime = performance.now();
 
     const triCount = vertices.length / 9;
@@ -926,8 +931,8 @@ function createSinglePassHeightMap(vertices, offset, resolution) {
     return { scale, center, size, rawHeightMap, heightMap, resolution };
 }
 
-function renderHeightMapTile(vertices, offset, scale, center, tileWidth, tileHeight, xStart, xEnd, yStart, yEnd) {
-    const renderer = getOffsetRenderer();
+function renderHeightMapTile(vertices, offset, scale, center, tileWidth, tileHeight, xStart, xEnd, yStart, yEnd, canvas?) {
+    const renderer = getOffsetRenderer(canvas);
     
     const triCount = vertices.length / 9;
     const vertCount = triCount * 9;
@@ -1035,7 +1040,7 @@ function renderHeightMapTile(vertices, offset, scale, center, tileWidth, tileHei
     return { heightMap, resolution: tileWidth };
 }
 
-async function createTiledHeightMap(vertices, offset, resolution, tileSize, progressCallback = null) {
+async function createTiledHeightMap(vertices, offset, resolution, tileSize, progressCallback = null, canvas?) {
     const startTime = performance.now();
     
     const db = await getTileDB();
@@ -1073,7 +1078,7 @@ async function createTiledHeightMap(vertices, offset, resolution, tileSize, prog
             const tileResult = renderHeightMapTile(
                 vertices, offset, scale, center,
                 tileWidth, tileHeight,
-                xStart, xEnd, yStart, yEnd
+                xStart, xEnd, yStart, yEnd, canvas
             );
             
             await db.saveTile(sessionId, tileX, tileY, {
@@ -1169,12 +1174,12 @@ export async function loadHeightMapFromTiles(result, progressCallback = null) {
 // Main API Function
 // ============================================
 
-export async function createOffsetHeightMap(vertices, offset, resolution = 1024, tileSize = 2048, progressCallback = null) {
+export async function createOffsetHeightMap(vertices, offset, resolution = 1024, tileSize = 2048, progressCallback = null, canvas?) {
     const needsTiling = resolution > tileSize;
-    
+
     if (needsTiling) {
-        return createTiledHeightMap(vertices, offset, resolution, tileSize, progressCallback);
+        return createTiledHeightMap(vertices, offset, resolution, tileSize, progressCallback, canvas);
     }
     
-    return createSinglePassHeightMap(vertices, offset, resolution);
+    return createSinglePassHeightMap(vertices, offset, resolution, canvas);
 }

@@ -14,7 +14,7 @@
 
 import * as THREE from 'three';
 import Module from 'manifold-3d';
-import { decimateMesh as fallbackDecimateMesh } from './meshAnalysis';
+import { decimateMesh as fallbackDecimateMesh, repairMesh as basicRepairMesh } from './meshAnalysis';
 
 // ============================================================================
 // Types & Interfaces
@@ -601,7 +601,9 @@ export async function repairAndDecimateMesh(
   const actions: string[] = [];
   
   const positionAttr = geometry.getAttribute('position');
-  const originalTriangles = positionAttr.count / 3;
+  const originalTriangles = geometry.index
+    ? geometry.index.count / 3
+    : positionAttr.count / 3;
   
   let currentGeometry = geometry;
   let wasRepaired = false;
@@ -628,8 +630,23 @@ export async function repairAndDecimateMesh(
         finalTriangles = repairResult.finalTriangles;
         actions.push(...repairResult.actions);
       } else if (!repairResult.success) {
-        console.warn('[ManifoldMeshService] Repair failed, continuing with original geometry');
-        actions.push(`Repair skipped: ${repairResult.error}`);
+        // Manifold3D cannot handle truly non-manifold meshes (e.g. open shells).
+        // Fall back to basic repair: remove degenerate triangles + recompute normals.
+        console.warn('[ManifoldMeshService] Manifold3D repair failed — falling back to basic repair');
+        try {
+          const basicResult = await basicRepairMesh(currentGeometry);
+          if (basicResult.success && basicResult.geometry) {
+            currentGeometry = basicResult.geometry;
+            wasRepaired = true;
+            finalTriangles = basicResult.triangleCount;
+            actions.push(...basicResult.actions);
+            actions.push('Note: mesh has open boundaries that could not be fully sealed');
+          } else {
+            actions.push(`Repair skipped: ${repairResult.error}`);
+          }
+        } catch {
+          actions.push(`Repair skipped: ${repairResult.error}`);
+        }
       }
     }
     
@@ -659,7 +676,7 @@ export async function repairAndDecimateMesh(
           finalTriangles: fallbackResult.finalTriangles,
           reductionPercent: fallbackResult.reductionPercent,
         };
-        actions.push(`Fast Quadric decimation: ${fallbackResult.originalTriangles.toLocaleString()} → ${fallbackResult.finalTriangles.toLocaleString()} triangles`);
+        actions.push(`Mesh decimation (MeshOptimizer + Fast Quadric): ${fallbackResult.originalTriangles.toLocaleString()} → ${fallbackResult.finalTriangles.toLocaleString()} triangles`);
       } else {
         decimateResult = {
           success: false,
@@ -755,8 +772,6 @@ export async function unionGeometriesWithManifold(
       success: false,
       geometry: null,
       inputMeshCount: 0,
-      successfulMeshCount: 0,
-      failedMeshCount: 0,
       totalInputTriangles: 0,
       finalTriangles: 0,
       error: 'No geometries provided for union',

@@ -44,5 +44,5 @@ export * from './primitives';
 // Stores - Zustand state management
 export * from './stores';
 
-// Branding - RapidTool family logo and theme toggle
+// Branding - RapidTool logo + theme toggle (ToolTrace-local; kept across cad-ui syncs)
 export * from './branding';

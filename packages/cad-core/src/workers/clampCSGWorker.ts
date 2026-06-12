@@ -133,8 +133,8 @@ function performCSGSubtraction(
     const cutoutsBrush = new Brush(cutoutsClone);
     
     // Prepare BVH structures with increased maxDepth
-    supportBrush.prepareGeometry();
-    cutoutsBrush.prepareGeometry();
+    supportBrush.prepareGeometry(BVH_OPTIONS);
+    cutoutsBrush.prepareGeometry(BVH_OPTIONS);
     
     sendProgress(70);
     

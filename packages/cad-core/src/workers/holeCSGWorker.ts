@@ -8,13 +8,8 @@
  */
 
 import * as THREE from 'three';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Brush, Evaluator, SUBTRACTION } from 'three-bvh-csg';
-
-// BVH options with increased maxDepth to handle complex geometries without warnings
-const BVH_OPTIONS = {
-  maxDepth: 100, // Default is 40, increase for complex merged geometries
-  maxLeafTris: 10,
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -116,21 +111,26 @@ function performCSGSubtraction(
     const baseplateBrush = new Brush(baseplateClone);
     const holesBrush = new Brush(holesClone);
     
-    // Prepare BVH structures with increased maxDepth
+    // Prepare BVH structures
     baseplateBrush.prepareGeometry();
     holesBrush.prepareGeometry();
-    
+
     sendProgress(50);
-    
+
     // Perform CSG subtraction (baseplate - holes)
     const result = csgEvaluator.evaluate(baseplateBrush, holesBrush, SUBTRACTION);
-    
+
     sendProgress(90);
-    
+
     if (result && result.geometry) {
-      result.geometry.computeVertexNormals();
+      // three-bvh-csg returns non-indexed triangle soup.
+      // Weld duplicate vertices before computing normals so:
+      //  1. Adjacent flat triangles share vertices → smooth normals, no crack lines.
+      //  2. T-junction micro-gaps at the CSG boundary are closed.
+      const welded = mergeVertices(result.geometry, 0.001);
+      welded.computeVertexNormals();
       sendProgress(100);
-      return result.geometry;
+      return welded;
     }
     
     // Fallback to original geometry

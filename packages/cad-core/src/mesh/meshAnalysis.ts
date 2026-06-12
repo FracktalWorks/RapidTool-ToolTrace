@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { simplifyGeometry } from './simplify';
+import { simplifyInWorker } from '../workers/decimateWorkerManager';
 
 // ============================================================================
 // Types & Interfaces
@@ -225,47 +226,69 @@ export async function analyzeMesh(
   onProgress?: ProgressCallback
 ): Promise<MeshAnalysisResult> {
   reportProgress(onProgress, 'analyzing', 0, 'Starting mesh analysis...');
-  
-  const positions = getPositionArray(geometry);
-  const triangleCount = positions.length / 9;
-  const vertexCount = positions.length / 3;
+
+  const positionAttr = geometry.getAttribute('position');
+  const positions    = positionAttr.array as Float32Array;
+  const indexAttr    = geometry.index;
+
+  // ── Correct triangle / vertex counts ────────────────────────────────────────
+  // After P2-01 all imported geometry is indexed (welded).
+  // Non-indexed (legacy / externally-created geometry) falls back to the flat
+  // triangle-soup formula — each consecutive triplet of position entries = 1 tri.
+  const triangleCount = indexAttr
+    ? Math.floor(indexAttr.count / 3)
+    : Math.floor(positionAttr.count / 3);
+
+  // Unique vertex count. For indexed geometry this is << triangleCount × 3.
+  const vertexCount = positionAttr.count;
+
+  // Extract a Uint32Array index buffer (or null for non-indexed geometry).
+  // Normalise to Uint32Array so helpers never touch the attribute type directly.
+  const indices: Uint32Array | null = indexAttr
+    ? (indexAttr.array instanceof Uint32Array
+        ? indexAttr.array
+        : new Uint32Array(indexAttr.array))
+    : null;
+
   const issues: string[] = [];
-  
+
   // Compute bounding box
   reportProgress(onProgress, 'analyzing', 10, 'Computing bounding box...');
   geometry.computeBoundingBox();
   const bbox = geometry.boundingBox!;
   const size = bbox.getSize(new THREE.Vector3());
-  
+
   // Check for degenerate triangles
   reportProgress(onProgress, 'analyzing', 30, 'Checking for degenerate faces...');
-  const { degenerateCount, hasDegenerateFaces } = countDegenerateFaces(positions, triangleCount);
-  
+  const { degenerateCount, hasDegenerateFaces } =
+    countDegenerateFaces(positions, indices, triangleCount);
+
   if (degenerateCount > 0) {
     issues.push(`Found ${degenerateCount.toLocaleString()} degenerate (zero-area) triangles`);
   }
-  
+
   // Analyze edge topology
   reportProgress(onProgress, 'analyzing', 60, 'Analyzing edge topology...');
-  const { nonManifoldCount, boundaryEdgeCount, hasNonManifoldEdges } = analyzeEdges(positions, triangleCount);
-  
+  const { nonManifoldCount, boundaryEdgeCount, hasNonManifoldEdges } =
+    analyzeEdges(indices, triangleCount);
+
   if (nonManifoldCount > 0) {
     issues.push(`Found ${nonManifoldCount.toLocaleString()} non-manifold edges`);
   }
-  
+
   if (boundaryEdgeCount > 0) {
     issues.push(`Found ${boundaryEdgeCount.toLocaleString()} boundary edges (mesh has holes)`);
   }
-  
+
   // Check triangle count
   if (triangleCount > DECIMATION_THRESHOLD) {
     issues.push(`High triangle count (${triangleCount.toLocaleString()}) may impact performance`);
   }
-  
+
   reportProgress(onProgress, 'analyzing', 100, 'Analysis complete');
-  
+
   const isManifold = !hasNonManifoldEdges && boundaryEdgeCount === 0 && !hasDegenerateFaces;
-  
+
   return {
     isManifold,
     triangleCount,
@@ -282,59 +305,95 @@ export async function analyzeMesh(
   };
 }
 
-function countDegenerateFaces(positions: Float32Array, triangleCount: number) {
-  const v0 = new THREE.Vector3();
-  const v1 = new THREE.Vector3();
-  const v2 = new THREE.Vector3();
+/**
+ * Count degenerate (zero-area) triangles.
+ *
+ * Handles both indexed and non-indexed geometry:
+ * - Indexed:     vertex positions are looked up via the index buffer.
+ * - Non-indexed: each consecutive triple of position entries is one triangle
+ *                (legacy flat triangle-soup layout).
+ */
+function countDegenerateFaces(
+  positions: Float32Array,
+  indices:   Uint32Array | null,
+  triangleCount: number,
+) {
+  const v0    = new THREE.Vector3();
+  const v1    = new THREE.Vector3();
+  const v2    = new THREE.Vector3();
   const edge1 = new THREE.Vector3();
   const edge2 = new THREE.Vector3();
   const cross = new THREE.Vector3();
-  
+
   let degenerateCount = 0;
-  
+
   for (let i = 0; i < triangleCount; i++) {
-    const base = i * 9;
-    v0.fromArray(positions, base);
-    v1.fromArray(positions, base + 3);
-    v2.fromArray(positions, base + 6);
-    
+    // Resolve the three vertex indices for this triangle.
+    const i0 = indices ? indices[i * 3]     : i * 3;
+    const i1 = indices ? indices[i * 3 + 1] : i * 3 + 1;
+    const i2 = indices ? indices[i * 3 + 2] : i * 3 + 2;
+
+    // Read XYZ from the position buffer (stride = 3 floats per vertex).
+    v0.fromArray(positions, i0 * 3);
+    v1.fromArray(positions, i1 * 3);
+    v2.fromArray(positions, i2 * 3);
+
     if (triangleAreaSquared(v0, v1, v2, edge1, edge2, cross) < MIN_TRIANGLE_AREA_SQ) {
       degenerateCount++;
     }
   }
-  
+
   return {
     degenerateCount,
     hasDegenerateFaces: degenerateCount > 0,
   };
 }
 
-function analyzeEdges(positions: Float32Array, triangleCount: number) {
+/**
+ * Analyse edge topology to find non-manifold and boundary edges.
+ *
+ * Each edge is keyed by its two VERTEX INDICES (order-independent).  For a
+ * manifold closed mesh every edge is shared by exactly 2 triangles:
+ *   count === 1  → boundary edge  (mesh has a hole)
+ *   count  >  2  → non-manifold   (more than 2 faces share this edge)
+ *
+ * Handles both indexed and non-indexed geometry:
+ * - Indexed:     uses real shared vertex indices from the index buffer.
+ * - Non-indexed: falls back to sequential per-triangle vertex numbers.
+ *                Two geometrically identical vertices in different triangles
+ *                get different numbers, so boundary/non-manifold counts will
+ *                be over-reported for non-indexed meshes.  This is acceptable
+ *                since all geometry produced by parseWorker is indexed.
+ */
+function analyzeEdges(
+  indices:      Uint32Array | null,
+  triangleCount: number,
+) {
   const edgeUsageMap = new Map<string, number>();
-  
-  // Build edge usage map
+
   for (let i = 0; i < triangleCount; i++) {
-    const baseVertex = i * 3;
-    const edges = [
-      createEdgeKey(baseVertex, baseVertex + 1),
-      createEdgeKey(baseVertex + 1, baseVertex + 2),
-      createEdgeKey(baseVertex + 2, baseVertex),
-    ];
-    
-    for (const edge of edges) {
-      edgeUsageMap.set(edge, (edgeUsageMap.get(edge) || 0) + 1);
-    }
+    // Resolve vertex indices — indexed geometry uses the real shared indices.
+    const i0 = indices ? indices[i * 3]     : i * 3;
+    const i1 = indices ? indices[i * 3 + 1] : i * 3 + 1;
+    const i2 = indices ? indices[i * 3 + 2] : i * 3 + 2;
+
+    const e0 = createEdgeKey(i0, i1);
+    const e1 = createEdgeKey(i1, i2);
+    const e2 = createEdgeKey(i2, i0);
+
+    edgeUsageMap.set(e0, (edgeUsageMap.get(e0) ?? 0) + 1);
+    edgeUsageMap.set(e1, (edgeUsageMap.get(e1) ?? 0) + 1);
+    edgeUsageMap.set(e2, (edgeUsageMap.get(e2) ?? 0) + 1);
   }
-  
-  // Analyze edge usage
+
   let nonManifoldCount = 0;
   let boundaryEdgeCount = 0;
-  
+
   for (const count of edgeUsageMap.values()) {
     if (count > 2) nonManifoldCount++;
     if (count === 1) boundaryEdgeCount++;
   }
-  
+
   return {
     nonManifoldCount,
     boundaryEdgeCount,
@@ -347,7 +406,11 @@ function analyzeEdges(positions: Float32Array, triangleCount: number) {
 // ============================================================================
 
 /**
- * Attempts to repair a mesh by removing degenerate triangles and recomputing normals
+ * Attempts to repair a mesh by removing degenerate triangles and recomputing normals.
+ *
+ * Accepts both indexed and non-indexed geometry.  Indexed geometry (post-P2-01,
+ * all imported meshes) is normalised to flat triangle-soup at the start via
+ * `toNonIndexed()` so the stride-9 loop arithmetic below remains correct.
  */
 export async function repairMesh(
   geometry: THREE.BufferGeometry,
@@ -355,11 +418,15 @@ export async function repairMesh(
 ): Promise<MeshRepairResult> {
   try {
     reportProgress(onProgress, 'repairing', 0, 'Starting mesh repair...');
-    
-    const positions = getPositionArray(geometry);
-    const normalAttr = geometry.getAttribute('normal');
+
+    // Normalise: expand indexed geometry to flat triangle-soup (stride-9 per triangle).
+    // This is a one-time O(triangleCount) allocation — acceptable for a repair step.
+    const flatGeometry = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+
+    const positions = getPositionArray(flatGeometry);
+    const normalAttr = flatGeometry.getAttribute('normal');
     const normals = normalAttr ? normalAttr.array as Float32Array : null;
-    const triangleCount = positions.length / 9;
+    const triangleCount = Math.floor(positions.length / 9);
     
     const actions: string[] = [];
     const validPositions: number[] = [];
@@ -497,14 +564,17 @@ export async function cleanupCSGResult(
 
   try {
     reportProgress(onProgress, 'repairing', 0, 'Starting CSG cleanup...');
-    
+
     const actions: string[] = [];
-    let workGeometry = geometry.clone();
-    
+
+    // Normalise to flat triangle-soup.  CSG workers return indexed geometry
+    // (via reconstructGeometry); all stride-9 arithmetic below assumes flat layout.
+    let workGeometry = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+
     // Step 1: Remove degenerate triangles first
     reportProgress(onProgress, 'repairing', 10, 'Removing degenerate triangles...');
     const positions = getPositionArray(workGeometry);
-    const triangleCount = positions.length / 9;
+    const triangleCount = Math.floor(positions.length / 9);
     
     const v0 = new THREE.Vector3();
     const v1 = new THREE.Vector3();
@@ -718,8 +788,13 @@ function findConnectedComponents(
   geometry: THREE.BufferGeometry,
   vertexMergeTolerance: number
 ): number[][] {
-  const positions = getPositionArray(geometry);
-  const triangleCount = positions.length / 9;
+  // Callers (cleanupCSGResult) normalise to flat before calling here.
+  // Use the safe formula anyway so this function is correct if called directly.
+  const posAttr = geometry.getAttribute('position');
+  const positions = posAttr.array as Float32Array;
+  const triangleCount = geometry.index
+    ? Math.floor(geometry.index.count / 3)
+    : Math.floor(posAttr.count / 3);
   
   if (triangleCount === 0) return [];
   
@@ -994,17 +1069,122 @@ async function simplifyWithMeshOptimizer(
 }
 
 // ============================================================================
+// Decimation (worker-dispatched MeshOptimizer path)
+// ============================================================================
+
+/**
+ * Worker-dispatched variant of `simplifyWithMeshOptimizer`.
+ *
+ * Identical geometry preparation to the inline version (clone → optional
+ * mergeVertices → extract typed arrays), but the actual `MeshoptSimplifier.simplify`
+ * call runs in a dedicated worker thread so the main thread stays responsive.
+ *
+ * Main thread retains `positionArray` after the structured-clone postMessage, so
+ * geometry reconstruction does not need a round-trip for positions.
+ */
+async function simplifyWithMeshOptimizerInWorker(
+  geometry: THREE.BufferGeometry,
+  targetIndexCount: number,
+  onProgress?: ProgressCallback,
+): Promise<DecimationResult> {
+  let workGeometry = geometry.clone();
+
+  const originalPositions = workGeometry.getAttribute('position');
+  const originalVertexCount = originalPositions.count;
+  const originalTriangles = workGeometry.index
+    ? workGeometry.index.count / 3
+    : originalVertexCount / 3;
+
+  // Merge vertices when the geometry is not indexed or is a triangle soup.
+  if (!workGeometry.index || originalVertexCount === originalTriangles * 3) {
+    workGeometry = mergeVertices(workGeometry, 1e-4);
+  }
+
+  const posAttr       = workGeometry.getAttribute('position');
+  const positionArray = posAttr.array as Float32Array;
+  const vertexCount   = posAttr.count;
+
+  // Build Uint32Array index buffer.
+  let indexArray: Uint32Array;
+  if (workGeometry.index) {
+    const src = workGeometry.index.array;
+    indexArray = new Uint32Array(src.length);
+    for (let i = 0; i < src.length; i++) indexArray[i] = src[i];
+  } else {
+    indexArray = new Uint32Array(vertexCount);
+    for (let i = 0; i < vertexCount; i++) indexArray[i] = i;
+  }
+
+  const triangleCount = indexArray.length / 3;
+
+  reportProgress(onProgress, 'decimating', 5, 'Running MeshOptimizer simplify (worker)...');
+
+  try {
+    // Dispatch to worker — structured clone keeps positionArray on main thread.
+    const workerResult = await simplifyInWorker(positionArray, indexArray, targetIndexCount);
+    const { newIndices, finalTriangles } = workerResult;
+
+    if (finalTriangles === 0) {
+      throw new Error('MeshOptimizer (worker) produced empty mesh');
+    }
+
+    if (finalTriangles >= triangleCount * 0.95) {
+      console.warn(`[MeshOptimizer] Minimal reduction (${triangleCount} → ${finalTriangles}), mesh may have issues`);
+    }
+
+    reportProgress(onProgress, 'decimating', 15, 'Building simplified geometry...');
+
+    const newGeometry = new THREE.BufferGeometry();
+    newGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positionArray), 3));
+
+    const normalAttr = workGeometry.getAttribute('normal');
+    if (normalAttr) {
+      newGeometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normalAttr.array as Float32Array), 3));
+    }
+
+    const uvAttr = workGeometry.getAttribute('uv');
+    if (uvAttr) {
+      newGeometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvAttr.array as Float32Array), 2));
+    }
+
+    newGeometry.setIndex(new THREE.BufferAttribute(newIndices, 1));
+
+    const reductionPercent = ((originalTriangles - finalTriangles) / originalTriangles) * 100;
+
+    return {
+      success: true,
+      geometry: newGeometry,
+      originalTriangles,
+      finalTriangles,
+      reductionPercent,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.warn('[MeshOptimizer] Worker simplification failed:', errorMessage);
+    return {
+      success: false,
+      geometry: null,
+      originalTriangles,
+      finalTriangles: 0,
+      reductionPercent: 0,
+      error: errorMessage,
+    };
+  }
+}
+
+// ============================================================================
 // Decimation
 // ============================================================================
 
 /**
  * Mesh decimation pipeline using MeshOptimizer + Fast Quadric in sequence:
- * 
- * 1. MeshOptimizer simplify() - Reduces large meshes (>500K) to 500K triangles
- * 2. Fast Quadric - Reduces from 500K (or less) to final target (50K)
- * 3. Manifold3D - Fallback if Fast Quadric fails
- * 4. Vertex Clustering - Last resort for problematic meshes
- * 
+ *
+ * 1. MeshOptimizer simplify() — Reduces large meshes (>500K) to 500K triangles
+ *    (runs in a dedicated worker — non-blocking).
+ * 2. Fast Quadric — Reduces from 500K (or less) to final target (50K)
+ *    (stays on main thread — Emscripten WASM with DOM dependency).
+ * 3. Vertex Clustering — Last resort for problematic meshes
+ *
  * Guarantees output below targetTriangles (default 50,000).
  */
 export async function decimateMesh(
@@ -1016,7 +1196,7 @@ export async function decimateMesh(
   const positions = geometry.getAttribute('position');
   const indices = geometry.index;
   const originalTriangles = indices ? indices.count / 3 : positions.count / 3;
-  
+
   // Skip if already below target
   if (originalTriangles <= targetTriangles) {
     console.log(`[Decimation] Skipped: ${originalTriangles.toLocaleString()} triangles already below target ${targetTriangles.toLocaleString()}`);
@@ -1028,21 +1208,42 @@ export async function decimateMesh(
       reductionPercent: 0,
     };
   }
-  
-  console.log(`[Decimation] Starting: ${originalTriangles.toLocaleString()} triangles → target ${targetTriangles.toLocaleString()}`);
-  
+
+  // Adaptive target: meshes above the mandatory threshold (500K) are reduced
+  // TO the threshold rather than all the way to 50K — preserves quality.
+  // Below 500K the caller's targetTriangles applies (default 50K).
+  // Examples: 721K → 500K (31% reduction) | 300K → 50K | 80K → 50K
+  const effectiveTarget = originalTriangles > MESHOPT_TARGET
+    ? Math.max(targetTriangles, MESHOPT_TARGET)
+    : targetTriangles;
+  if (effectiveTarget !== targetTriangles) {
+    console.log(`[Decimation] Adaptive target: ${targetTriangles.toLocaleString()} → ${effectiveTarget.toLocaleString()} (mesh exceeds ${MESHOPT_TARGET.toLocaleString()} threshold)`);
+  }
+
+  console.log(`[Decimation] Starting: ${originalTriangles.toLocaleString()} triangles → target ${effectiveTarget.toLocaleString()}`);
+
   let currentGeometry = geometry;
   let currentTriangles = originalTriangles;
-  
-  // STAGE 1: MeshOptimizer for large meshes (>500K triangles)
-  // Reduces to 500K first to make Fast Quadric faster and more reliable
-  if (currentTriangles > MESHOPT_TARGET) {
+
+  // STAGE 1: MeshOptimizer for all meshes above target — dispatched to worker.
+  // Runs first for any mesh that needs reduction (50K–500K and above).
+  // targetError = 0.001 acts as a quality brake: stops early if error budget is exceeded,
+  // leaving Fast Quadric to finish the job rather than destroying fine features.
+  //
+  // IMPORTANT: MeshOptimizer targets 1.5× the final triangle count so it never
+  // overshoots directly to the final target. Fast Quadric (Stage 2) MUST always
+  // run to produce the final geometry — QEM preserves feature edges and produces
+  // the accurate silhouette boundary that the support-placement algorithm depends
+  // on. If MeshOptimizer is allowed to reach the final target, the smoothed
+  // boundary it produces causes all 5 perimeter supports to merge into 1.
+  const meshoptCushionTarget = Math.ceil(effectiveTarget * 1.5);
+  if (currentTriangles > meshoptCushionTarget) {
     try {
-      reportProgress(onProgress, 'decimating', 0, `MeshOptimizer: ${currentTriangles.toLocaleString()} → ${MESHOPT_TARGET.toLocaleString()} triangles...`);
-      
-      const meshoptTargetIndices = MESHOPT_TARGET * 3;
-      const meshoptResult = await simplifyWithMeshOptimizer(currentGeometry, meshoptTargetIndices, onProgress);
-      
+      reportProgress(onProgress, 'decimating', 0, `MeshOptimizer: ${currentTriangles.toLocaleString()} → ${meshoptCushionTarget.toLocaleString()} triangles...`);
+
+      const meshoptTargetIndices = meshoptCushionTarget * 3;
+      const meshoptResult = await simplifyWithMeshOptimizerInWorker(currentGeometry, meshoptTargetIndices, onProgress);
+
       if (meshoptResult.success && meshoptResult.geometry) {
         const reduction = ((originalTriangles - meshoptResult.finalTriangles) / originalTriangles * 100).toFixed(1);
         console.log(`[Decimation] Step 1 - MeshOptimizer: ${originalTriangles.toLocaleString()} → ${meshoptResult.finalTriangles.toLocaleString()} triangles (${reduction}% reduction)`);
@@ -1056,9 +1257,9 @@ export async function decimateMesh(
       console.warn('[decimateMesh] MeshOptimizer error:', meshoptError);
     }
   }
-  
-  // If already at or below target after MeshOptimizer, we're done
-  if (currentTriangles <= targetTriangles) {
+
+  // If already at or below effective target after MeshOptimizer, we're done
+  if (currentTriangles <= effectiveTarget) {
     currentGeometry.computeVertexNormals();
     return {
       success: true,
@@ -1068,12 +1269,12 @@ export async function decimateMesh(
       reductionPercent: ((originalTriangles - currentTriangles) / originalTriangles) * 100,
     };
   }
-  
+
   // STAGE 2: Fast Quadric to reach final target
-  const ratio = Math.max(0.01, Math.min(0.99, targetTriangles / currentTriangles));
-  
+  const ratio = Math.max(0.01, Math.min(0.99, effectiveTarget / currentTriangles));
+
   try {
-    reportProgress(onProgress, 'decimating', 45, `Fast Quadric: ${currentTriangles.toLocaleString()} → ${targetTriangles.toLocaleString()} triangles...`);
+    reportProgress(onProgress, 'decimating', 45, `Fast Quadric: ${currentTriangles.toLocaleString()} → ${effectiveTarget.toLocaleString()} triangles...`);
     
     const result = await simplifyGeometry(currentGeometry, {
       ratio,
@@ -1113,7 +1314,7 @@ export async function decimateMesh(
     
     const manifoldResult = await decimateMeshWithManifold(
       currentGeometry,
-      targetTriangles,
+      effectiveTarget,
       (p) => {
         const mappedProgress = 70 + (p.progress * 0.3); // 70-100% for Manifold
         reportProgress(onProgress, 'decimating', mappedProgress, p.message);
@@ -1142,7 +1343,7 @@ export async function decimateMesh(
   
   // STAGE 4: Vertex clustering as last resort
   try {
-    const clusteredGeometry = vertexClusteringDecimate(currentGeometry, targetTriangles);
+    const clusteredGeometry = vertexClusteringDecimate(currentGeometry, effectiveTarget);
     const finalTriangles = clusteredGeometry.index 
       ? clusteredGeometry.index.count / 3 
       : clusteredGeometry.getAttribute('position').count / 3;
@@ -1771,10 +1972,15 @@ async function performSmoothing(
 
   reportProgress(progressCb, 'smoothing', 0, `Starting smoothing (${strengthLabel}, ${iterations} iter)...`);
 
-  const workGeometry = geometry.clone();
+  // buildAdjacencyMap expects flat non-indexed triangle soup (vertexCount/3 = triangleCount).
+  // Indexed geometry has unique vertex count ≠ triangleCount×3, giving a wrong adjacency map
+  // and distorting the mesh. Convert to non-indexed first, then re-index after smoothing so
+  // computeVertexNormals() produces smooth shading (not flat per-face normals).
+  const wasIndexed = !!geometry.index;
+  let workGeometry: THREE.BufferGeometry = wasIndexed ? geometry.toNonIndexed() : geometry.clone();
   const posAttr = workGeometry.getAttribute('position') as THREE.BufferAttribute;
   const positions = posAttr.array as Float32Array;
-  const vertexCount = posAttr.count;
+  const vertexCount = posAttr.count; // For non-indexed: triangleCount×3
 
   if (vertexCount > MAX_SMOOTHING_VERTICES) {
     reportProgress(progressCb, 'smoothing', 100, 'Mesh too large for smoothing');
@@ -1810,6 +2016,17 @@ async function performSmoothing(
 
   if (debugColors && smoothingResult.heightmapInfo) {
     applyDebugColors(workGeometry, smoothingResult.heightmapInfo, vertexCount);
+  }
+
+  // Re-index so computeVertexNormals() shares vertices at smooth edges.
+  // CRITICAL: delete stale normals first — mergeVertices matches on ALL attributes,
+  // so per-face normals from decimation would prevent vertex merging at shared
+  // positions → each vertex stays unique → flat per-face shading after recompute.
+  if (wasIndexed) {
+    workGeometry.deleteAttribute('normal');
+    const reindexed = mergeVertices(workGeometry, 1e-4);
+    workGeometry.dispose();
+    workGeometry = reindexed;
   }
 
   workGeometry.computeVertexNormals();

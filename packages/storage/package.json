@@ -1,0 +1,20 @@
+{
+  "name": "@rapidtool/storage",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Shared client-side storage: IndexedDB session persistence, auto-save, crash recovery, and undo/redo for RapidTool platform apps.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0"
+  }
+}
