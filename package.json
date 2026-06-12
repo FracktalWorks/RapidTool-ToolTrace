@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:cf": "tsc -b && vite build && rm -rf dist/models",
     "lint": "eslint .",
     "preview": "vite preview"
   },

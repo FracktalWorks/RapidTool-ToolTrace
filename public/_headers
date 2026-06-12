@@ -1,0 +1,11 @@
+# Cloudflare Pages headers.
+# Cross-origin isolation → SharedArrayBuffer → multi-threaded onnxruntime-web
+# (SOD ~10–15s instead of ~60s). MUST be present or the SOD drops to 1 thread.
+# COEP `credentialless` still lets the jsDelivr ORT runtime + the R2/CDN model load.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless
+
+# Content-hashed build assets — cache hard.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

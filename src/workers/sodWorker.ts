@@ -30,7 +30,10 @@ ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0-de
 // set in vite.config); if absent, ORT silently drops to 1 thread (~60 s) — still works.
 ort.env.wasm.numThreads = Math.min((self.navigator?.hardwareConcurrency || 4), 8);
 
-const MODEL_URL = '/models/isnet_q8.onnx';
+// Local dev serves the 46MB model from /public; production hosts it externally
+// (Cloudflare R2 / CDN) because Cloudflare Pages caps files at 25MB. Override with
+// VITE_MODEL_URL (must send CORS so it loads under COEP credentialless).
+const MODEL_URL = import.meta.env.VITE_MODEL_URL || '/models/isnet_q8.onnx';
 const SIZE = 1024;
 // Mask threshold on the 0–255 normalised saliency. Lowering it to 0.31 to recover
 // faint bright chrome (caliper jaws) backfired — it didn't recover them (they read
