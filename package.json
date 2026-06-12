@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:cf": "vite build && rm -rf dist/models",
+    "build:cf": "vite build && node scripts/strip-deploy.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },
