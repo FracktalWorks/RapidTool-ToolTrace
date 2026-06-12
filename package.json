@@ -18,6 +18,7 @@
     "@react-three/fiber": "^8.18.0",
     "@tailwindcss/vite": "^4.1.18",
     "@types/three": "^0.182.0",
+    "axios": "^1.17.0",
     "clipper-lib": "^6.4.2",
     "lucide-react": "^0.563.0",
     "motion": "^12.29.2",

@@ -7,6 +7,7 @@
 
 import { DashboardLayout, LoadingOverlay, type DashboardLayoutConfig } from '@rapidtool/cad-ui';
 import { Header, ImageWorkspace, LayoutWorkspace, DesignWorkspace, ExportWorkspace, ControlPanel, Sidebar, ErrorBoundary } from './components';
+import { AuthGate } from './components/AuthGate';
 import { useAppStore } from './stores';
 
 // Layout configuration for DashboardLayout
@@ -81,6 +82,7 @@ function App() {
 
   return (
     <ErrorBoundary>
+      <AuthGate>
       <DashboardLayout
         config={layoutConfig}
         header={<Header />}
@@ -99,7 +101,7 @@ function App() {
           <ErrorBoundary>
             {renderWorkspace()}
           </ErrorBoundary>
-          
+
           {/* Loading Overlay - Only for main content */}
           <LoadingOverlay
             isVisible={isProcessing}
@@ -109,6 +111,7 @@ function App() {
           />
         </div>
       </DashboardLayout>
+      </AuthGate>
     </ErrorBoundary>
   );
 }
