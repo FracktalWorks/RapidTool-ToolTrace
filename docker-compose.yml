@@ -1,0 +1,10 @@
+# Local container build of the production image — handy for verifying the prod
+# build + the COOP/COEP headers before deploying. `docker compose up --build`
+# then open http://localhost:8090 (the SOD threads need those headers to engage).
+services:
+  tooltrace:
+    build: .
+    image: rapidtool-tooltrace
+    ports:
+      - "8090:80"
+    restart: unless-stopped
