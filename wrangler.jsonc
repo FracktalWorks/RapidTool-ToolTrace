@@ -7,9 +7,10 @@
   // `npm run build:cf` (strips the 46MB model + the oversized bundled ORT wasm,
   // both > Cloudflare's 25MB/file cap; both load from CDN/R2 at runtime instead).
   //
-  // COOP/COEP + caching come from public/_headers (copied into dist); SPA routing
-  // from not_found_handling below (and public/_redirects).
-  "name": "tooltrace",
+  // COOP/COEP + caching come from public/_headers (copied into dist). SPA routing
+  // is handled by not_found_handling below — do NOT add a public/_redirects with
+  // `/* /index.html 200`; Cloudflare rejects it as an infinite-loop with this mode.
+  "name": "rapidtool-tooltrace",
   "compatibility_date": "2024-11-01",
   "assets": {
     "directory": "./dist",
