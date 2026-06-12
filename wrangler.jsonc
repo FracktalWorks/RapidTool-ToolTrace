@@ -15,5 +15,11 @@
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application"
-  }
+  },
+  // appliedadditive.com is a Cloudflare zone (portal/fixtures live there), so this
+  // provisions the custom domain + TLS on deploy. tooltrace is already in the
+  // backend CORS list, so SSO works here once the backend redeploys.
+  "routes": [
+    { "pattern": "tooltrace.appliedadditive.com", "custom_domain": true }
+  ]
 }
