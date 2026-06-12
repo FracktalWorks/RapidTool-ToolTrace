@@ -24,3 +24,9 @@ export {
   samEverLoaded,
   type SamLoadProgress,
 } from './samWorkerManager';
+
+export {
+  sodDetect,
+  sodPreload,
+  type SodProgress,
+} from './sodWorkerManager';

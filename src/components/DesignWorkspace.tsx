@@ -14,6 +14,8 @@ import { OrbitControls, GizmoHelper, GizmoViewport, Grid, Environment } from '@r
 import * as THREE from 'three';
 import { Brush, Evaluator, SUBTRACTION } from 'three-bvh-csg';
 import { useAppStore, type LayoutShape, type DesignSettings } from '../stores';
+import { createGridfinityFeet, unitsFor } from '../lib/gridfinityGeometry';
+import { offsetPolygon } from '../lib/geometry';
 import { RotateCcw, Box } from 'lucide-react';
 
 // Extend JSX.IntrinsicElements for R3F
@@ -35,12 +37,25 @@ export type { DesignSettings } from '../stores';
 // Utility Functions
 // ============================================================================
 
+/** Rotate points around (cx,cy) by `deg`. The layout angle is screen-space
+ *  (y-down); the 3D build flips Y, so we negate the angle to match. */
+function rotatePts(pts: { x: number; y: number }[], cx: number, cy: number, deg: number) {
+  if (!deg) return pts;
+  const rad = (-deg * Math.PI) / 180;
+  const c = Math.cos(rad), s = Math.sin(rad);
+  return pts.map((p) => ({
+    x: cx + (p.x - cx) * c - (p.y - cy) * s,
+    y: cy + (p.x - cx) * s + (p.y - cy) * c,
+  }));
+}
+
 function createSolidShape(
   shape: LayoutShape,
   layoutWidth: number,
   layoutHeight: number,
   toolOutlines: ReturnType<typeof useAppStore.getState>['toolOutlines'],
-  pixelsPerMm: number | null
+  pixelsPerMm: number | null,
+  offsetMm = 0,
 ): THREE.Shape | null {
   const solid = new THREE.Shape();
 
@@ -77,7 +92,11 @@ function createSolidShape(
     }
 
     // signedArea > 0 means CCW
-    const orderedPoints = signedArea > 0 ? points : [...points].reverse();
+    const ordered = signedArea > 0 ? points : [...points].reverse();
+    // Apply the layout rotation around the shape centre so the pocket matches.
+    const rotated = rotatePts(ordered, centerX, centerY, shape.rotation);
+    // OFFSET (Traces > Offset): grow the pocket uniformly for drop-in clearance.
+    const orderedPoints = offsetMm ? offsetPolygon(rotated, offsetMm) : rotated;
 
     solid.moveTo(orderedPoints[0].x, orderedPoints[0].y);
     for (let i = 1; i < orderedPoints.length; i++) {
@@ -220,7 +239,8 @@ function createPocketFloorWithCutouts(
   chamfer: number,
   shapes: LayoutShape[],
   toolOutlines: ReturnType<typeof useAppStore.getState>['toolOutlines'],
-  pixelsPerMm: number | null
+  pixelsPerMm: number | null,
+  offsetMm = 0,
 ): THREE.BufferGeometry {
   const t = wallThickness;
   const r = Math.max(chamfer - t * 0.5, 0.5);
@@ -258,7 +278,7 @@ function createPocketFloorWithCutouts(
   resultBrush.updateMatrixWorld();
 
   shapes.forEach((shape) => {
-    const cutoutShape = createSolidShape(shape, width, height, toolOutlines, pixelsPerMm);
+    const cutoutShape = createSolidShape(shape, width, height, toolOutlines, pixelsPerMm, offsetMm);
     if (!cutoutShape) return;
 
     const cutoutGeometry = new THREE.ExtrudeGeometry(cutoutShape, {
@@ -380,6 +400,7 @@ const ToolHolderMesh: React.FC<ToolHolderMeshProps> = ({
   settings,
 }) => {
   const { grid, shapes } = layoutState;
+  const clearanceValue = useAppStore((s) => s.clearanceValue);
   const meshRef = useRef<THREE.Group>(null);
 
   // Calculate layout dimensions in mm
@@ -422,15 +443,23 @@ const ToolHolderMesh: React.FC<ToolHolderMeshProps> = ({
       settings.chamferSize,
       shapes,
       toolOutlines,
-      pixelsPerMm
+      pixelsPerMm,
+      clearanceValue,
     );
-  }, [layoutWidth, layoutHeight, settings.wallThickness, settings.cutoutDepth, settings.baseHeight, settings.chamferSize, shapes, toolOutlines, pixelsPerMm]);
+  }, [layoutWidth, layoutHeight, settings.wallThickness, settings.cutoutDepth, settings.baseHeight, settings.chamferSize, shapes, toolOutlines, pixelsPerMm, clearanceValue]);
 
-  // Gridfinity base pattern (magnet holes) - punches into the bottom of base plate
+  // Gridfinity magnet-hole placeholder (legacy) - punches into bottom of base plate
   const gridfinityGeometry = useMemo(() => {
     if (!settings.gridfinityBase) return null;
     return createGridfinityBase(layoutWidth, layoutHeight, grid.cellWidthMm);
   }, [layoutWidth, layoutHeight, grid.cellWidthMm, settings.gridfinityBase]);
+
+  // Real Gridfinity INTERLOCKING FEET — the stair-step profile that seats into a
+  // baseplate. Tiled one per 42mm cell, hanging below the base plate (z<0).
+  const feetGeometry = useMemo(() => {
+    if (!settings.gridfinityBase) return null;
+    return createGridfinityFeet(unitsFor(layoutWidth), unitsFor(layoutHeight));
+  }, [layoutWidth, layoutHeight, settings.gridfinityBase]);
 
   // Material for the holder walls and inner parts
   const holderMaterial = useMemo(() => {
@@ -483,10 +512,10 @@ const ToolHolderMesh: React.FC<ToolHolderMeshProps> = ({
         />
       )}
 
-      {/* Gridfinity magnet holes - on bottom of base plate */}
-      {gridfinityGeometry && (
+      {/* Gridfinity interlocking feet - stair-step profile, hangs below base plate */}
+      {feetGeometry && (
         <mesh
-          geometry={gridfinityGeometry}
+          geometry={feetGeometry}
           material={gridfinityMaterial}
           position={[0, 0, 0]}
         />
@@ -669,6 +698,18 @@ export const DesignWorkspace: React.FC = () => {
           antialias: true,
           toneMapping: THREE.ACESFilmicToneMapping,
           toneMappingExposure: 1,
+          powerPreference: 'high-performance',
+          // Don't fail if the browser flags a perf caveat (WebGPU SOD/SAM may be
+          // holding the high-perf GPU) — fall back rather than refuse a context.
+          failIfMajorPerformanceCaveat: false,
+        }}
+        onCreated={({ gl }) => {
+          // WebGPU (SOD/SAM) + WebGL (this view) can contend for the GPU and the
+          // browser may drop this context. preventDefault on 'lost' lets the
+          // browser RESTORE it (R3F then rebuilds resources) instead of going blank.
+          const canvas = gl.domElement;
+          canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); }, false);
+          canvas.addEventListener('webglcontextrestored', () => { gl.setClearColor(0x000000, 0); }, false);
         }}
       >
         <Scene

@@ -182,9 +182,22 @@ export async function samAutoSegment(
   for (const m of res.masks) {
     const contour = await contourFromMask(m.mask, m.width, m.height);
     const scaled = scaleResult(contour, res.scale);
-    if (scaled && scaled.points.length >= 3) {
-      out.push({ ...scaled, confidence: m.score });
+    if (!scaled || scaled.points.length < 3) continue;
+
+    // VALIDITY GATE (paper bounds): the same gate samSegmentPoint uses, now on
+    // the autonomous path too. Reject any mask whose centroid falls outside the
+    // A4 sheet — this is the off-sheet "blue arc" leak onto the dark background.
+    if (paperCorners) {
+      let cx = 0, cy = 0;
+      for (const p of scaled.points) { cx += p.x; cy += p.y; }
+      cx /= scaled.points.length; cy /= scaled.points.length;
+      if (!pointInQuad(cx, cy, paperCorners)) {
+        console.log('[SAM] auto detection rejected — centroid outside paper');
+        continue;
+      }
     }
+
+    out.push({ ...scaled, confidence: m.score });
   }
   return out;
 }

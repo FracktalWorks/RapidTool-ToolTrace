@@ -212,6 +212,20 @@ export async function contourFromMask(
   return request('contourFromMask', { mask, width, height });
 }
 
+/**
+ * Convert a trained-model (SOD) foreground mask into per-tool contours through
+ * the SAME OpenCV gates as classical detection (hole-fill, area/solidity/aspect,
+ * RDP). One ToolTracingResult per connected tool — points in the mask's own
+ * coordinate space (the caller maps them back to full-image coords).
+ */
+export async function traceMask(
+  mask: ArrayBuffer,
+  width: number,
+  height: number,
+): Promise<ToolTracingResult[]> {
+  return request<ToolTracingResult[]>('traceMask', { mask, width, height });
+}
+
 export interface ToolProposal {
   positivePoints: Point2D[];
   negativePoints: Point2D[];

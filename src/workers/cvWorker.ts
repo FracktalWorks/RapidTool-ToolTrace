@@ -34,7 +34,7 @@ interface Stroke { points: Point2D[] }
 
 type WorkerMessageType =
   | 'init' | 'detectPaper' | 'traceTool' | 'traceRegion' | 'traceAllTools'
-  | 'grabCutInit' | 'grabCutRefine' | 'grabCutClear' | 'contourFromMask' | 'proposeRegions';
+  | 'grabCutInit' | 'grabCutRefine' | 'grabCutClear' | 'contourFromMask' | 'proposeRegions' | 'traceMask';
 
 interface WorkerMessage { id: string; type: WorkerMessageType; payload: any }
 interface WorkerResponse { id: string; type: 'success' | 'error'; payload: any }
@@ -317,10 +317,23 @@ function buildToolMask(src: any, paperCorners?: PaperCorners): any {
   const maskDark = new cv.Mat();
   cv.bitwise_and(maskDarkRaw, maskVar8, maskDark);
 
+  // The box-blur variance cue blooms ~half the variance window BEYOND the true
+  // tool edge — inflating chrome tools outward (the spanner-ring overshoot) and
+  // bridging tools that sit close together (two blooms touch -> one blob). Erode
+  // the chrome cue back to the true silhouette so outlines hug the edge (~0.2mm)
+  // and nearby tools stay SEPARATE. The dark-gate above keeps the full variance
+  // so dark tool edges aren't clipped.
+  const varErode = Math.max(3, Math.round(kVar / 2));
+  const evSz = varErode % 2 ? varErode : varErode + 1;
+  const kVarErode = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(evSz, evSz));
+  const maskVarTight = new cv.Mat();
+  cv.erode(maskVar8, maskVarTight, kVarErode);
+  kVarErode.delete();
+
   // Union of all three cues.
   const mask = new cv.Mat();
   cv.bitwise_or(maskChroma, maskDark, mask);
-  cv.bitwise_or(mask, maskVar8, mask);
+  cv.bitwise_or(mask, maskVarTight, mask);
 
   // Restrict to the paper interior when known.
   if (interior) cv.bitwise_and(mask, interior, mask);
@@ -333,7 +346,7 @@ function buildToolMask(src: any, paperCorners?: PaperCorners): any {
 
   deleteMats(rgb, lab, L, A, B, Af, Bf, pAm, pBm, dA, dB, chroma2,
              maskChroma, maskDarkRaw, maskDark, grayF, grayF2, meanI, meanI2,
-             meanI2sq, varMat, maskVar8, kClean);
+             meanI2sq, varMat, maskVar8, maskVarTight, kClean);
   ch.delete();
   if (sampleMask !== interior) sampleMask.delete();
   if (interior) interior.delete();
@@ -811,16 +824,13 @@ function extractContourPoints(
 // Auto-detect ALL tools on paper
 // ============================================================================
 
-function traceAllTools(imageData: ImageData, paperCorners?: PaperCorners): TraceResult[] {
-  console.log('traceAllTools: finding all tools on paper...', paperCorners ? 'with boundary masking' : '');
-  const src = cv.matFromImageData(imageData);
-  const totalArea = src.rows * src.cols;
+// Shared core: a solid binary mask (CV_8U, 0/255) → one gated TraceResult per
+// connected tool. Used by BOTH the classical path (buildToolMask) and the SOD
+// path (trained-model mask). Mutates `mask` (hole-fill). Caller frees `mask`.
+function tracePreparedMask(mask: any, rows: number, cols: number): TraceResult[] {
+  const totalArea = rows * cols;
 
-  // Single fused mask shared with click/box trace (fixed ∪ Otsu, shadow-free,
-  // resolution-aware morphology, optional paper boundary).
-  const mask = buildToolMask(src, paperCorners);
-
-  // Fill all internal holes and shadow loops before tracing final outer contours
+  // Fill internal holes / shadow loops before tracing outer contours.
   const tempContours = new cv.MatVector();
   const tempHierarchy = new cv.Mat();
   cv.findContours(mask, tempContours, tempHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
@@ -836,36 +846,57 @@ function traceAllTools(imageData: ImageData, paperCorners?: PaperCorners): Trace
   const hierarchy = new cv.Mat();
   cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
 
-  const minArea = Math.max(800, totalArea * 0.0003); // Lowered to catch smaller tools
+  // Floor raised to reject shadow/pencil-mark blobs. Measured: false positives
+  // top out ~7.5k px while the smallest real tool is ~30k, so 10k cleanly cuts the
+  // noise without dropping genuine tools. Scales up for large images.
+  const minArea = Math.max(10000, totalArea * 0.003);
   const results: TraceResult[] = [];
 
   for (let i = 0; i < contours.size(); i++) {
     const contour = contours.get(i);
     const area = cv.contourArea(contour);
+    if (area < minArea || area > totalArea * 0.6) { contour.delete(); continue; }
 
-    // Reject noise (too small) and the paper itself (too large).
-    if (area < minArea || area > totalArea * 0.6) {
-      contour.delete();
-      continue;
-    }
-    // Reject low-quality blobs — lowered from 0.3 to 0.15 for thin tool parts.
     const solidity = calculateSolidity(contour);
-    if (solidity < 0.15) {
-      contour.delete();
-      continue;
-    }
+    if (solidity < 0.15) { contour.delete(); continue; }
+
+    // Reject thin linear artifacts (paper folds / scratches / shadow wisps):
+    // aspect 19–45 measured, vs real tools ~2–3. Gate on min-area-rect aspect.
+    const mar = cv.minAreaRect(contour);
+    const minorDim = Math.min(mar.size.width, mar.size.height);
+    const aspect = Math.max(mar.size.width, mar.size.height) / Math.max(1, minorDim);
+    const minThick = Math.max(8, Math.round(Math.min(rows, cols) * 0.006));
+    if (aspect > 14 || minorDim < minThick) { contour.delete(); continue; }
 
     const confidence = contourConfidence(contour);
-    const result = extractContourPoints(contour, 0, 0, area, confidence);
-    results.push(result);
-    console.log(`Found tool: ${result.points.length} pts, area=${Math.round(area)}, conf=${confidence.toFixed(2)}`);
+    results.push(extractContourPoints(contour, 0, 0, area, confidence));
+    console.log(`Found tool: area=${Math.round(area)}, conf=${confidence.toFixed(2)}, minorDim=${minorDim.toFixed(0)}, aspect=${aspect.toFixed(1)}`);
     contour.delete();
   }
 
-  deleteMats(mask, contours, hierarchy);
-  src.delete();
+  deleteMats(contours, hierarchy);
+  return results;
+}
 
+function traceAllTools(imageData: ImageData, paperCorners?: PaperCorners): TraceResult[] {
+  console.log('traceAllTools: finding all tools on paper...', paperCorners ? 'with boundary masking' : '');
+  const src = cv.matFromImageData(imageData);
+  const mask = buildToolMask(src, paperCorners);
+  const results = tracePreparedMask(mask, src.rows, src.cols);
+  deleteMats(mask);
+  src.delete();
   console.log(`traceAllTools: found ${results.length} tools`);
+  return results;
+}
+
+// SOD path: a prebuilt foreground mask from the trained model → per-tool results
+// through the exact same gates as the classical path.
+function traceMask(maskData: Uint8Array, width: number, height: number): TraceResult[] {
+  const mask = new cv.Mat(height, width, cv.CV_8UC1);
+  mask.data.set(maskData);
+  const results = tracePreparedMask(mask, height, width);
+  deleteMats(mask);
+  console.log(`traceMask: found ${results.length} tools`);
   return results;
 }
 
@@ -1013,6 +1044,63 @@ interface ToolProposal {
   sourceArea: number;         // classical contour area for filtering/sorting
 }
 
+function pointInPaperQuad(px: number, py: number, c: PaperCorners): boolean {
+  const poly = [c.topLeft, c.topRight, c.bottomRight, c.bottomLeft];
+  let inside = false;
+  for (let i = 0, j = 3; i < 4; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+    if (((yi > py) !== (yj > py)) && (px < ((xj - xi) * (py - yi)) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function pointCoveredByProposal(
+  x: number,
+  y: number,
+  proposals: ToolProposal[],
+  pad: number,
+  maxCoverArea = Infinity
+): boolean {
+  for (const p of proposals) {
+    if (p.bbox.w * p.bbox.h > maxCoverArea) continue;
+    if (
+      x >= p.bbox.x - pad &&
+      x <= p.bbox.x + p.bbox.w + pad &&
+      y >= p.bbox.y - pad &&
+      y <= p.bbox.y + p.bbox.h + pad
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function buildSparsePromptProposal(x: number, y: number, rows: number, cols: number, radius: number): ToolProposal {
+  const r = Math.max(18, radius);
+  const x0 = clamp(x - r, 0, cols - 1);
+  const y0 = clamp(y - r, 0, rows - 1);
+  const x1 = clamp(x + r, 0, cols - 1);
+  const y1 = clamp(y + r, 0, rows - 1);
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+
+  return {
+    positivePoints: [
+      { x: cx, y: cy },
+      { x: clamp(cx - r * 0.35, 0, cols - 1), y: cy },
+      { x: clamp(cx + r * 0.35, 0, cols - 1), y: cy },
+    ],
+    // Sparse probes may land on one section of a long/chrome tool. Avoid local
+    // negatives that could mark another part of the same tool as background;
+    // samWorker.decodeAt will add image/paper-corner negatives automatically.
+    negativePoints: [],
+    bbox: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 },
+    sourceArea: (x1 - x0) * (y1 - y0),
+  };
+}
+
 /**
  * Convert a contour into a structured ToolProposal with multi-point prompts.
  *
@@ -1138,7 +1226,9 @@ function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): Tool
 
   const rows = src.rows, cols = src.cols;
   const totalArea = rows * cols;
-  const minArea = Math.max(800, totalArea * 0.0003);
+  // Raised from 0.0003: paper pencil marks / JPEG noise passed as tools (the
+  // false "Tool 2" on blank paper). A real hand-tool is >=0.1% of the sheet.
+  const minArea = Math.max(2000, totalArea * 0.001);
 
   // 1. Classical tool detection mask
   const classicalMask = buildToolMask(src, scaledCorners);
@@ -1408,93 +1498,93 @@ function proposeRegions(imageData: ImageData, paperCorners?: PaperCorners): Tool
     c.delete();
   }
 
+  // 6. Sparse SAM prompts over uncovered high-texture paper regions.
+  //
+  // Classical CV is a good locator for coloured/dark tools, but it can miss
+  // chrome-on-white regions whose edges are visible while the filled body reads
+  // like paper. Add a small number of prompt-only proposals where the paper has
+  // local edge/texture energy and no existing proposal covers the area. These
+  // are intentionally not merged into the classical mask: SAM gets to decide
+  // whether each prompt is a real tool, and its area/paper/NMS gates reject
+  // blank-paper probes.
+  if (scaledCorners) {
+    const maxSparsePrompts = 18;
+    const gridStep = Math.max(42, Math.round(Math.min(rows, cols) / 7));
+    const win = Math.max(9, Math.round(gridStep * 0.28));
+    const proposalPad = Math.max(18, Math.round(gridStep * 0.45));
+    const maxCoveredProposalArea = totalArea * 0.08;
+    const candidates: { x: number; y: number; score: number }[] = [];
+
+    for (let y = gridStep; y < rows - gridStep; y += gridStep) {
+      for (let x = gridStep; x < cols - gridStep; x += gridStep) {
+        if (!pointInPaperQuad(x, y, scaledCorners)) continue;
+        if (pointCoveredByProposal(x, y, proposals, proposalPad, maxCoveredProposalArea)) continue;
+
+        let edgeCount = 0;
+        let sum = 0;
+        let sumSq = 0;
+        let count = 0;
+        for (let yy = Math.max(0, y - win); yy <= Math.min(rows - 1, y + win); yy += 2) {
+          for (let xx = Math.max(0, x - win); xx <= Math.min(cols - 1, x + win); xx += 2) {
+            if (interior && interior.data[yy * cols + xx] === 0) continue;
+            const g = gray.data[yy * cols + xx];
+            sum += g;
+            sumSq += g * g;
+            count++;
+            if (edges.data[yy * cols + xx] > 0) edgeCount++;
+          }
+        }
+        if (count === 0) continue;
+
+        const mean = sum / count;
+        const variance = Math.max(0, sumSq / count - mean * mean);
+        const edgeDensity = edgeCount / count;
+
+        // Paper is usually flat: low variance and low edge density. Chrome,
+        // threads, knurling, labels, and tool boundaries all lift one or both.
+        if (edgeDensity < 0.08 && variance < 45) continue;
+        candidates.push({ x, y, score: edgeDensity * 100 + variance * 0.04 });
+      }
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    const sparsePrompts: ToolProposal[] = [];
+    for (const c of candidates) {
+      if (sparsePrompts.length >= maxSparsePrompts) break;
+      if (pointCoveredByProposal(c.x, c.y, sparsePrompts, proposalPad)) continue;
+      sparsePrompts.push(buildSparsePromptProposal(c.x, c.y, rows, cols, proposalPad));
+    }
+
+    if (sparsePrompts.length > 0) {
+      console.log(`proposeRegions: added ${sparsePrompts.length} sparse SAM prompts`);
+      proposals.push(...sparsePrompts);
+    }
+  }
+
   // Cleanup
   deleteMats(classicalMask, gray, blurred, edges, dilateKernel, closeKernel, combined, morphClose, morphOpen, contours, hierarchy);
   if (interior) interior.delete();
   if (src !== full) src.delete();
   full.delete();
 
+  // Keep proposals granular. Older code merged horizontally aligned groups into
+  // one giant row proposal, which made SAM return a whole strip instead of one
+  // mask per tool. Duplicate/sub-part prompts are cheaper and safer: SAM's
+  // containment-aware NMS below removes overlaps after masks exist.
   let finalProposals = proposals;
-  
-  if (proposals.length >= 3) {
-    const sorted = proposals.slice().sort((a, b) => {
-      const cya = a.bbox.y + a.bbox.h / 2;
-      const cyb = b.bbox.y + b.bbox.h / 2;
-      return cya - cyb;
-    });
 
-    const stripBandH = rows * 0.12;
-    const merged: ToolProposal[] = [];
-    const used = new Set<number>();
-
-    for (let i = 0; i < sorted.length; i++) {
-      if (used.has(i)) continue;
-      const group: ToolProposal[] = [sorted[i]];
-      const refCy = sorted[i].bbox.y + sorted[i].bbox.h / 2;
-
-      for (let j = i + 1; j < sorted.length; j++) {
-        if (used.has(j)) continue;
-        const cj = sorted[j].bbox.y + sorted[j].bbox.h / 2;
-        if (Math.abs(cj - refCy) < stripBandH) {
-          group.push(sorted[j]);
-          used.add(j);
-        }
-      }
-      used.add(i);
-
-      const groupSortedX = group.slice().sort((a, b) => a.bbox.x - b.bbox.x);
-      let hasLargeGap = false;
-      for (let k = 0; k < groupSortedX.length - 1; k++) {
-        const currentRight = groupSortedX[k].bbox.x + groupSortedX[k].bbox.w;
-        const nextLeft = groupSortedX[k+1].bbox.x;
-        const gap = nextLeft - currentRight;
-        if (gap > cols * 0.12) {
-          hasLargeGap = true;
-          break;
-        }
-      }
-
-      const hasVerticalTool = group.some(p => p.bbox.h > p.bbox.w * 1.1);
-
-      if (group.length >= 3 && !hasVerticalTool && !hasLargeGap) {
-        let minX = Infinity, minY = Infinity, maxX = 0, maxY = 0;
-        for (const p of group) {
-          minX = Math.min(minX, p.bbox.x);
-          minY = Math.min(minY, p.bbox.y);
-          maxX = Math.max(maxX, p.bbox.x + p.bbox.w);
-          maxY = Math.max(maxY, p.bbox.y + p.bbox.h);
-        }
-        const unionW = maxX - minX;
-        const unionH = maxY - minY;
-        const unionCx = (minX + maxX) / 2;
-        const unionCy = (minY + maxY) / 2;
-
-        const positivePoints: { x: number; y: number }[] = [];
-        for (let k = 0; k < 7; k++) {
-          const t = (k + 0.5) / 7;
-          positivePoints.push({ x: minX + t * unionW, y: unionCy });
-        }
-        const margin = Math.max(30, unionH * 0.25);
-        const negativePoints: { x: number; y: number }[] = [
-          { x: unionCx, y: Math.min(rows - 1, maxY + margin) },
-          { x: Math.max(0, minX - margin), y: unionCy },
-          { x: Math.min(cols - 1, maxX + margin), y: unionCy },
-          { x: unionCx, y: Math.max(0, minY - margin) },
-        ];
-        merged.push({
-          positivePoints,
-          negativePoints,
-          bbox: { x: minX, y: minY, w: unionW, h: unionH },
-          sourceArea: unionW * unionH,
-        });
-      } else {
-        merged.push(...group);
-      }
-    }
-
-    if (merged.length < proposals.length) {
-      finalProposals = merged;
-    }
+  // BUG B FIX: proposeRegions runs on a <=1200px downscaled image, but every
+  // consumer (samWorker.autoSegment) expects ORIGINAL-resolution coordinates and
+  // multiplies by its own procScale. Without this, prompts get squished toward
+  // the top-left and land on paper. Scale points/bbox back to original space.
+  if (scale < 1) {
+    const inv = 1 / scale;
+    finalProposals = finalProposals.map(p => ({
+      positivePoints: p.positivePoints.map(pt => ({ x: pt.x * inv, y: pt.y * inv })),
+      negativePoints: p.negativePoints.map(pt => ({ x: pt.x * inv, y: pt.y * inv })),
+      bbox: { x: p.bbox.x * inv, y: p.bbox.y * inv, w: p.bbox.w * inv, h: p.bbox.h * inv },
+      sourceArea: p.sourceArea * inv * inv,
+    }));
   }
 
   console.log(`proposeRegions: found ${finalProposals.length} unified proposals`);
@@ -1532,9 +1622,12 @@ function contourFromMask(mask: Uint8Array, width: number, height: number): Trace
   const maskH = Math.max(1, maskMaxY - maskMinY);
   const maskW = Math.max(1, maskMaxX - maskMinX);
   const maskMinDim = Math.min(maskH, maskW);
-  const closeSize = Math.max(5, Math.min(15, Math.round(maskMinDim * 0.03)));
+  // SAM masks are already clean and precise. Keep morphology MINIMAL — a large
+  // close rounds off sharp corners (knife tip, L-square corner, caliper jaws),
+  // destroying the very precision SAM produced. Only seal hairline gaps.
+  const closeSize = Math.max(3, Math.min(7, Math.round(maskMinDim * 0.012)));
   const kCloseSize = closeSize % 2 === 0 ? closeSize + 1 : closeSize;
-  const openSize = Math.max(3, Math.round(maskMinDim * 0.005));
+  const openSize = Math.max(3, Math.min(5, Math.round(maskMinDim * 0.003)));
   const kOpenSize = openSize % 2 === 0 ? openSize + 1 : openSize;
 
   const kClose = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(kCloseSize, kCloseSize));
@@ -1652,6 +1745,9 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         break;
       case 'proposeRegions':
         result = proposeRegions(payload.imageData, payload.paperCorners);
+        break;
+      case 'traceMask':
+        result = traceMask(new Uint8Array(payload.mask), payload.width, payload.height);
         break;
       default:
         throw new Error(`Unknown message type: ${type}`);

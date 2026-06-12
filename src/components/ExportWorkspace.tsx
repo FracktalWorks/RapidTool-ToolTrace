@@ -15,6 +15,8 @@ import * as THREE from 'three';
 import { Brush, Evaluator, SUBTRACTION } from 'three-bvh-csg';
 import { STLExporter } from 'three-stdlib';
 import { useAppStore, type LayoutShape, type DesignSettings } from '../stores';
+import { createGridfinityFeet, unitsFor } from '../lib/gridfinityGeometry';
+import { offsetPolygon } from '../lib/geometry';
 import { Download, FileCode, Box, RotateCcw, Layers } from 'lucide-react';
 import { downloadSVG } from '../lib/exportSVG';
 
@@ -30,12 +32,24 @@ declare module 'react' {
 // Utility Functions (shared with DesignWorkspace)
 // ============================================================================
 
+/** Rotate points around (cx,cy) by `deg` (negated to match the Y-flipped build). */
+function rotatePts(pts: { x: number; y: number }[], cx: number, cy: number, deg: number) {
+  if (!deg) return pts;
+  const rad = (-deg * Math.PI) / 180;
+  const c = Math.cos(rad), s = Math.sin(rad);
+  return pts.map((p) => ({
+    x: cx + (p.x - cx) * c - (p.y - cy) * s,
+    y: cy + (p.x - cx) * s + (p.y - cy) * c,
+  }));
+}
+
 function createSolidShape(
   shape: LayoutShape,
   layoutWidth: number,
   layoutHeight: number,
   toolOutlines: ReturnType<typeof useAppStore.getState>['toolOutlines'],
-  pixelsPerMm: number | null
+  pixelsPerMm: number | null,
+  offsetMm = 0,
 ): THREE.Shape | null {
   const solid = new THREE.Shape();
 
@@ -72,7 +86,10 @@ function createSolidShape(
     }
 
     // signedArea > 0 means CCW
-    const orderedPoints = signedArea > 0 ? points : [...points].reverse();
+    const ordered = signedArea > 0 ? points : [...points].reverse();
+    // Apply layout rotation + Offset clearance so the export matches the preview.
+    const rotated = rotatePts(ordered, centerX, centerY, shape.rotation);
+    const orderedPoints = offsetMm ? offsetPolygon(rotated, offsetMm) : rotated;
 
     solid.moveTo(orderedPoints[0].x, orderedPoints[0].y);
     for (let i = 1; i < orderedPoints.length; i++) {
@@ -209,7 +226,8 @@ function createPocketFloorWithCutouts(
   chamfer: number,
   shapes: LayoutShape[],
   toolOutlines: ReturnType<typeof useAppStore.getState>['toolOutlines'],
-  pixelsPerMm: number | null
+  pixelsPerMm: number | null,
+  offsetMm = 0,
 ): THREE.BufferGeometry {
   const t = wallThickness;
   const r = Math.max(chamfer - t * 0.5, 0.5);
@@ -247,7 +265,7 @@ function createPocketFloorWithCutouts(
   resultBrush.updateMatrixWorld();
 
   shapes.forEach((shape) => {
-    const cutoutShape = createSolidShape(shape, width, height, toolOutlines, pixelsPerMm);
+    const cutoutShape = createSolidShape(shape, width, height, toolOutlines, pixelsPerMm, offsetMm);
     if (!cutoutShape) return;
 
     const cutoutGeometry = new THREE.ExtrudeGeometry(cutoutShape, {
@@ -279,7 +297,8 @@ export function generateExportMesh(
   layoutState: ReturnType<typeof useAppStore.getState>['layoutState'],
   toolOutlines: ReturnType<typeof useAppStore.getState>['toolOutlines'],
   pixelsPerMm: number | null,
-  settings: DesignSettings
+  settings: DesignSettings,
+  offsetMm = 0,
 ): THREE.Mesh {
   const { grid, shapes } = layoutState;
   
@@ -312,10 +331,11 @@ export function generateExportMesh(
         settings.chamferSize,
         shapes,
         toolOutlines,
-        pixelsPerMm
+        pixelsPerMm,
+        offsetMm,
       )
     : null;
-  
+
   // Create a group and merge all geometries
   const mergedGeometry = new THREE.BufferGeometry();
   const geometries: THREE.BufferGeometry[] = [];
@@ -340,6 +360,16 @@ export function generateExportMesh(
     floorMatrix.setPosition(0, -settings.baseHeight, 0);
     pocketFloorGeometry.applyMatrix4(floorMatrix);
     geometries.push(pocketFloorGeometry);
+  }
+
+  // Gridfinity interlocking feet — hang below the base plate so the printed bin
+  // seats into a baseplate. Same -90° X rotation as the rest of the assembly.
+  if (settings.gridfinityBase) {
+    const feet = createGridfinityFeet(unitsFor(layoutWidth), unitsFor(layoutHeight));
+    const feetMatrix = new THREE.Matrix4();
+    feetMatrix.makeRotationX(-Math.PI / 2);
+    feet.applyMatrix4(feetMatrix);
+    geometries.push(feet);
   }
   
   // Merge geometries using BufferGeometryUtils approach
@@ -784,7 +814,7 @@ export const ExportWorkspace: React.FC = () => {
         downloadSVG(outlinesToExport, pixelsPerMm, 'tooltrace-export.svg');
       } else {
         // Export STL using the 3D mesh
-        const mesh = generateExportMesh(layoutState, toolOutlines, pixelsPerMm, designSettings);
+        const mesh = generateExportMesh(layoutState, toolOutlines, pixelsPerMm, designSettings, clearanceValue);
         
         // Use STLExporter from three-stdlib
         const exporter = new STLExporter();

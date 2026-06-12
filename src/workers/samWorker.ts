@@ -355,7 +355,10 @@ async function autoSegment(
   const W0 = session.image.width, H0 = session.image.height;
   const origArea = (W0 * session.scaleToOriginal) * (H0 * session.scaleToOriginal);
   const minArea = origArea * 0.0005;
-  const maxArea = origArea * 0.65; // Raised from 0.25: extruder screw spans ~62% of frame
+  // A4 hand-tools: no single tool exceeds ~30% of the frame. A mask at 50%+ is
+  // the paper sheet itself (proven: a prompt that lands on blank paper makes
+  // SAM2 return a ~55% mask). Gate at 30% so paper-filling masks are rejected.
+  const maxArea = origArea * 0.30;
 
   const results: { mask: ArrayBuffer; width: number; height: number; score: number }[] = [];
 

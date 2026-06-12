@@ -319,7 +319,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       regularizedPoints = regularizeContour(smoothedPoints, {
         lineThreshold: 2.0,
         arcResidual: 5.0,
-        symmetryStrength: 0.6,
+        // Symmetry OFF: forcing mirror-symmetry distorts asymmetric tools.
+        symmetryStrength: 0.0,
       });
       if (!regularizedPoints || regularizedPoints.length < 4) {
         regularizedPoints = undefined;
@@ -327,7 +328,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch {
       regularizedPoints = undefined;
     }
-    
+
     const displayPoints = regularizedPoints ?? smoothedPoints;
     const boundingBox = getBoundingBox(displayPoints);
     const area = polygonArea(displayPoints);
@@ -344,14 +345,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     const outline = state.toolOutlines.find(o => o.id === id);
     if (!outline) return state;
     
-    const smoothedPoints = smoothContour(points, 0.5, 2);
-    
+    const smoothedPoints = smoothContour(points, 1.5, 0); // RDP-only: keep SAM's sharp edges
+
     let regularizedPoints: Point2D[] | undefined;
     try {
       regularizedPoints = regularizeContour(smoothedPoints, {
         lineThreshold: 2.0,
         arcResidual: 5.0,
-        symmetryStrength: 0.6,
+        // Symmetry OFF: forcing mirror-symmetry distorts asymmetric tools
+        // (knife, L-square, adjustable wrench, caliper) on refine/edit.
+        symmetryStrength: 0.0,
       });
       if (!regularizedPoints || regularizedPoints.length < 4) {
         regularizedPoints = undefined;
@@ -470,50 +473,55 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { toolOutlines, pixelsPerMm, clearanceValue, layoutState } = state;
     
     if (!pixelsPerMm || toolOutlines.length === 0) return;
-    
-    const grid = layoutState.grid;
-    const layoutWidthMm = grid.cols * grid.cellWidthMm;
-    
-    // Convert tool outlines to layout shapes with applied clearance
-    const shapes: LayoutShape[] = [];
-    let currentX = 5; // 5mm margin
-    let currentY = 5;
-    let rowMaxHeight = 0;
-    
-    toolOutlines.forEach((outline) => {
-      // Calculate dimensions in mm
-      const bbox = outline.boundingBox;
-      const widthPx = bbox.maxX - bbox.minX;
-      const heightPx = bbox.maxY - bbox.minY;
-      const widthMm = widthPx / pixelsPerMm + clearanceValue * 2;
-      const heightMm = heightPx / pixelsPerMm + clearanceValue * 2;
-      
-      // Check if we need to wrap to next row
-      if (currentX + widthMm > layoutWidthMm - 5) {
-        currentX = 5;
-        currentY += rowMaxHeight + 5; // 5mm gap between rows
-        rowMaxHeight = 0;
-      }
-      
-      shapes.push({
-        id: `layout-${outline.id}`,
-        type: 'tool',
-        x: currentX,
-        y: currentY,
-        width: widthMm,
-        height: heightMm,
-        rotation: 0,
-        toolOutlineId: outline.id,
-        color: outline.color,
-      });
-      
-      currentX += widthMm + 5; // 5mm gap between tools
-      rowMaxHeight = Math.max(rowMaxHeight, heightMm);
+
+    const cell = layoutState.grid.cellWidthMm || 42;
+    // Margin/gap grow with the Offset so dilated pockets never overlap.
+    const MARGIN = 8 + clearanceValue;     // mm border around the tools
+    const GAP = 6 + clearanceValue * 2;    // mm between stacked tools
+
+    // 1. Each tool's raw footprint in mm. (Clearance/Offset is applied as a true
+    //    contour offset at render time — not baked into the box size here.)
+    const dims = toolOutlines.map((o) => {
+      const b = o.boundingBox;
+      return {
+        outline: o,
+        w: (b.maxX - b.minX) / pixelsPerMm,
+        h: (b.maxY - b.minY) / pixelsPerMm,
+      };
     });
-    
+
+    // 2. AUTO-SIZE the grid to actually CONTAIN the tools (stacked vertically),
+    //    so long tools are never clipped. Grid grows in whole 42 mm cells.
+    const stackH = dims.reduce((s, d) => s + d.h, 0) + GAP * (dims.length - 1);
+    const neededW = Math.max(...dims.map((d) => d.w)) + MARGIN * 2;
+    const neededH = stackH + MARGIN * 2;
+    const cols = Math.max(1, Math.ceil(neededW / cell));
+    const rows = Math.max(1, Math.ceil(neededH / cell));
+    const layoutW = cols * cell;
+    const layoutH = rows * cell;
+
+    // 3. Place tools: vertical centred stack, each horizontally centred.
+    let y = (layoutH - stackH) / 2;
+    const shapes: LayoutShape[] = dims.map((d) => {
+      const shape: LayoutShape = {
+        id: `layout-${d.outline.id}`,
+        type: 'tool',
+        x: (layoutW - d.w) / 2,
+        y,
+        width: d.w,
+        height: d.h,
+        rotation: 0,
+        toolOutlineId: d.outline.id,
+        color: d.outline.color,
+      };
+      y += d.h + GAP;
+      return shape;
+    });
+
     set({
       layoutState: {
         ...layoutState,
+        grid: { ...layoutState.grid, cols, rows },
         shapes,
         selectedShapeId: null,
       },

@@ -218,6 +218,56 @@ export const offsetPolygon = (
   }
 };
 
+/**
+ * Boolean UNION of two polygons → the largest merged ring. Used to ADD a refine
+ * region (e.g. an SOD-missed caliper jaw) into an existing tool outline without
+ * ever losing the geometry that was already there. Falls back to `a` on failure.
+ */
+export const unionPolygons = (a: Point2D[], b: Point2D[]): Point2D[] => {
+  if (a.length < 3) return [...b];
+  if (b.length < 3) return [...a];
+  const SCALE = 1000;
+  // clipper-lib's bundled types omit Clipper()/PolyType/ClipType (they exist at
+  // runtime), so reach them through an untyped view.
+  const CL = ClipperLib as unknown as {
+    IntPoint: new (x: number, y: number) => unknown;
+    Clipper: new () => {
+      AddPath: (p: unknown, t: unknown, c: boolean) => void;
+      Execute: (ct: unknown, sol: unknown, sf: unknown, cf: unknown) => boolean;
+    };
+    Paths: new () => unknown[];
+    PolyType: { ptSubject: unknown; ptClip: unknown };
+    ClipType: { ctUnion: unknown };
+    PolyFillType: { pftNonZero: unknown };
+  };
+  try {
+    const toPath = (pts: Point2D[]) =>
+      pts.map((p) => new CL.IntPoint(Math.round(p.x * SCALE), Math.round(p.y * SCALE)));
+    const c = new CL.Clipper();
+    c.AddPath(toPath(a), CL.PolyType.ptSubject, true);
+    c.AddPath(toPath(b), CL.PolyType.ptClip, true);
+    const sol = new CL.Paths();
+    c.Execute(CL.ClipType.ctUnion, sol, CL.PolyFillType.pftNonZero, CL.PolyFillType.pftNonZero);
+    const paths = sol as Array<Array<{ X: number; Y: number }>>;
+    if (!paths.length) return [...a];
+    // Keep the largest resulting ring (outer boundary), area via shoelace.
+    let outer = paths[0], maxArea = -1;
+    for (const ring of paths) {
+      let s = 0;
+      for (let i = 0; i < ring.length; i++) {
+        const j = (i + 1) % ring.length;
+        s += ring[i].X * ring[j].Y - ring[j].X * ring[i].Y;
+      }
+      const ar = Math.abs(s);
+      if (ar > maxArea) { maxArea = ar; outer = ring; }
+    }
+    return outer.map((p) => ({ x: p.X / SCALE, y: p.Y / SCALE }));
+  } catch (err) {
+    console.error('Clipper union failed, keeping original polygon:', err);
+    return [...a];
+  }
+};
+
 // Create tool outline from traced points
 let counter = 0;
 const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899'];
@@ -229,7 +279,12 @@ export const createToolOutline = (
   samClicks?: { x: number; y: number; label: number }[]
 ): ToolOutline => {
   const area = polygonArea(points);
-  const processed = smoothContour(points, 2.0, 3);
+  // RDP-only (Chaikin iterations = 0): RDP removes the mask's pixel staircase
+  // while keeping EXACT corner vertices. Any Chaikin pass rounds sharp corners
+  // (proven: 3 passes obliterate an L-square's inner corner, 1 still chamfers
+  // it). Mechanical tools are straight edges + crisp corners — keep them sharp.
+  // True arcs are recovered downstream by regularizeContour's arc-fitting.
+  const processed = smoothContour(points, 1.5, 0);
 
   // 1. Try template matching first (gives perfect CAD outline)
   let regularized: Point2D[] | undefined;
@@ -285,6 +340,18 @@ export const createToolOutline = (
 /**
  * Standard tool contour smoothing: Simplification followed by Chaikin smoothing
  */
+// Even-odd point-in-polygon test (image-space). Used to route a trace click onto
+// an existing tool (refine it) vs. empty paper (create a new tool).
+export const pointInPolygon = (pt: Point2D, poly: Point2D[]): boolean => {
+  if (!poly || poly.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+    if (((yi > pt.y) !== (yj > pt.y)) && (pt.x < ((xj - xi) * (pt.y - yi)) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+};
+
 export const smoothContour = (pts: Point2D[], epsilon: number = 2.0, iterations: number = 4): Point2D[] => {
   if (pts.length < 3) return pts;
   const simplified = simplifyPath(pts, epsilon);

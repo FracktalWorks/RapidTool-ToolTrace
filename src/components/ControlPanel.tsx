@@ -454,7 +454,8 @@ const ToolsStepPanel: React.FC = () => {
         ];
 
         const newOutlines = results.map((result, index) => {
-          const smoothed = smoothContour(result.points);
+          // RDP-only (0 Chaikin) — keep sharp corners; default was 4 Chaikin passes.
+          const smoothed = smoothContour(result.points, 1.5, 0);
           const bbox = getBoundingBox(result.points);
           return {
             id: `tool-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 9)}`,
@@ -496,7 +497,8 @@ const ToolsStepPanel: React.FC = () => {
       if (results && results.length > 0) {
         const TOOL_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
         const newOutlines = results.map((result, index) => {
-          const smoothed = smoothContour(result.points, 0.5, 2);
+          // RDP-only (0 Chaikin) — keep SAM's sharp corners crisp (see geometry.ts).
+          const smoothed = smoothContour(result.points, 1.5, 0);
           return {
             id: `ai-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 9)}`,
             points: result.points,
@@ -511,11 +513,71 @@ const ToolsStepPanel: React.FC = () => {
         });
         setToolOutlines(newOutlines);
         setAutoDetectCount(results.length);
-        setAutoDetectDone(true);
+      } else {
+        // Keep the workflow moving if SAM rejects every prompt; classical can
+        // still provide a usable baseline that the user can refine manually.
+        await runAutoDetect();
       }
+      setAutoDetectDone(true);
     } catch (error) {
       console.error('AI detect failed, falling back to classical auto-detect:', error);
-      runAutoDetect();
+      await runAutoDetect();
+      setAutoDetectDone(true);
+    } finally {
+      setIsAiDetecting(false);
+      setAiProgress(null);
+    }
+  }, [imageUrl, isAiDetecting, pixelsPerMm, setToolOutlines, paperCorners, runAutoDetect]);
+
+  // SOD detection (IS-Net, trained model): produces a clean foreground mask that
+  // solves chrome, shadows and tool separation at the mask level, then routes
+  // through the same OpenCV gates + RDP edges as classical. Falls back to the
+  // classical foreground path if the model can't load or returns nothing.
+  const runSodDetect = useCallback(async () => {
+    if (!imageUrl || isAiDetecting) return;
+    setIsAiDetecting(true);
+    setAiProgress(0);
+    try {
+      const { sodDetect } = await import('../workers');
+      const { smoothContour, getBoundingBox } = await import('../lib/geometry');
+
+      const results = await sodDetect(imageUrl, paperCorners ?? undefined);
+
+      // SOD keys on saliency, so an all-metallic / low-contrast tool (e.g. a bare
+      // steel screw on greyish paper) reads as background and SOD returns only a
+      // weak noise blob. Treat low best-confidence as failure and fall back to the
+      // classical brightness/edge detector (which keys on contrast, not saliency).
+      const maxConf = results && results.length ? Math.max(...results.map((r) => r.confidence ?? 0)) : 0;
+      const sodWeak = !results || results.length === 0 || maxConf < 0.5;
+
+      if (!sodWeak) {
+        const TOOL_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
+        const newOutlines = results.map((result, index) => {
+          // SOD masks have organic, slightly serrated boundaries (1024² upscaled).
+          // RDP (2.5) drops the staircase, then 2 Chaikin passes smooth the curve.
+          const smoothed = smoothContour(result.points, 2.5, 2);
+          return {
+            id: `sod-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 9)}`,
+            points: result.points,
+            smoothedPoints: smoothed,
+            boundingBox: getBoundingBox(smoothed),
+            area: result.area,
+            areaInMm2: pixelsPerMm ? result.area / (pixelsPerMm * pixelsPerMm) : undefined,
+            color: TOOL_COLORS[index % TOOL_COLORS.length],
+            name: `Tool ${index + 1}`,
+            confidence: result.confidence,
+          };
+        });
+        setToolOutlines(newOutlines);
+        setAutoDetectCount(results.length);
+      } else {
+        await runAutoDetect();
+      }
+      setAutoDetectDone(true);
+    } catch (error) {
+      console.error('SOD detect failed, falling back to classical auto-detect:', error);
+      await runAutoDetect();
+      setAutoDetectDone(true);
     } finally {
       setIsAiDetecting(false);
       setAiProgress(null);
@@ -524,13 +586,16 @@ const ToolsStepPanel: React.FC = () => {
 
   const autoDetectRef = useRef<string | null>(null);
 
-  // Auto-run AI detection when step is first entered (precisely segments all tools, including chrome)
+  // Auto-run the trained SOD detector (IS-Net) on load — solves chrome, shadows
+  // and separation at the mask level, with the classical foreground path as
+  // fallback. SAM-per-prompt (runAiDetect) stays a manual button; one-click SAM
+  // refine handles any touching/chrome stragglers.
   useEffect(() => {
     if (imageUrl && !autoDetectDone && toolOutlines.length === 0 && autoDetectRef.current !== imageUrl) {
       autoDetectRef.current = imageUrl;
-      runAiDetect();
+      runSodDetect();
     }
-  }, [imageUrl, autoDetectDone, toolOutlines.length, runAiDetect]);
+  }, [imageUrl, autoDetectDone, toolOutlines.length, runSodDetect]);
 
   return (
     <div className="h-full flex flex-col">
@@ -1043,6 +1108,8 @@ const LayoutStepPanel: React.FC = () => {
     clearAllLayoutShapes,
     initializeLayoutFromTools,
     removeLayoutShape,
+    clearanceValue,
+    setClearanceValue,
   } = useAppStore();
 
   const { grid, shapes, layoutTool } = layoutState;
@@ -1123,6 +1190,32 @@ const LayoutStepPanel: React.FC = () => {
           <p className="text-[11px] text-[hsl(var(--muted-foreground))] font-medium">
             {grid.cols * grid.cellWidthMm} × {grid.rows * grid.cellHeightMm} mm
             total
+          </p>
+        </div>
+
+        {/* Offset — uniform clearance dilated around each pocket (drop-in fit) */}
+        <div className="space-y-2">
+          <label className="text-[11px] font-semibold text-[hsl(var(--muted-foreground))] uppercase" style={{ letterSpacing: '0.08em' }}>
+            Offset
+          </label>
+          <div className="grid grid-cols-4 gap-1.5">
+            {[{ l: 'None', v: 0 }, { l: 'Small', v: 0.5 }, { l: 'Medium', v: 1 }, { l: 'Large', v: 2 }].map((o) => {
+              const active = Math.abs(clearanceValue - o.v) < 0.01;
+              return (
+                <button
+                  key={o.l}
+                  onClick={() => setClearanceValue(o.v)}
+                  className={`h-9 text-[12px] rounded-lg border transition-colors ${active
+                    ? 'border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]'
+                    : 'border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:border-[hsl(var(--primary)/0.5)]'}`}
+                >
+                  {o.l}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-[hsl(var(--muted-foreground))] font-medium">
+            {clearanceValue.toFixed(1)} mm clearance around each tool pocket
           </p>
         </div>
 

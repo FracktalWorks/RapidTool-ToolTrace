@@ -18,7 +18,7 @@ import { useAppStore } from '../stores';
 import type { Point2D, ToolOutline } from '../stores';
 import { DraggableCorners } from './DraggableCorners';
 import { TracingOverlay } from './TracingOverlay';
-import { calculatePixelsPerMm, createToolOutline, contourToSVGPath } from '../lib/geometry';
+import { calculatePixelsPerMm, createToolOutline, contourToSVGPath, pointInPolygon, unionPolygons } from '../lib/geometry';
 import { traceTool, grabCutInit, grabCutRefine, samSegmentPoint, type SamLoadProgress } from '../workers';
 
 // ============================================================================
@@ -592,31 +592,85 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
             }
 
             if (result) {
-              updateToolOutlineRefined(selectedOutlineId, result.points, currentClicks);
+              // ADD (label 1): UNION the segmented region into the existing outline
+              // so a missed part (e.g. caliper jaw) is appended without losing the
+              // body. REMOVE (label 0): take the re-segmentation as-is.
+              const existing = outline.smoothedPoints && outline.smoothedPoints.length >= 3 ? outline.smoothedPoints : outline.points;
+              const merged = label === 1 ? unionPolygons(existing, result.points) : result.points;
+              updateToolOutlineRefined(selectedOutlineId, merged, currentClicks);
             }
           }
         }
       } else {
-        // New tool creation
-        const initialClicks = [{ x: point.x, y: point.y, label: 1 }];
-        let result = null;
-        let samRan = false;
-        try {
-          result = await samSegmentPoint(imageUrl, initialClicks, { paperCorners: paperCorners || undefined, onProgress: setSamProgress });
-          samRan = true; // SAM completed (a null result = it ran and found no valid tool)
-        } catch (samErr) {
-          console.warn('SAM unavailable, falling back to classical trace:', samErr);
-        } finally {
-          setSamProgress(null);
+        // Did the click land INSIDE an existing tool? If so, refine THAT tool
+        // (same id, same colour) with SAM instead of spawning a duplicate
+        // "Tool 2" overlapping it. Only an empty-paper click makes a new tool.
+        let hit = toolOutlines.find(o =>
+          pointInPolygon(point, o.smoothedPoints && o.smoothedPoints.length >= 3 ? o.smoothedPoints : o.points)
+        );
+
+        // Not inside any tool: attach to the NEAREST tool when the click is close
+        // (an SOD-missed caliper jaw sits just off the body). No pre-selection
+        // needed — distance is 0 inside the bbox, else the gap to its edge. A far
+        // click on blank paper exceeds the reach and makes a NEW tool instead.
+        if (!hit) {
+          let best: (typeof toolOutlines)[number] | null = null;
+          let bestD = Infinity;
+          for (const o of toolOutlines) {
+            const b = o.boundingBox;
+            if (!b) continue;
+            const dx = Math.max(b.minX - point.x, 0, point.x - b.maxX);
+            const dy = Math.max(b.minY - point.y, 0, point.y - b.maxY);
+            const d = Math.hypot(dx, dy);
+            if (d < bestD) { bestD = d; best = o; }
+          }
+          if (best && best.boundingBox) {
+            const b = best.boundingBox;
+            const reach = Math.max(150, 0.25 * Math.hypot(b.maxX - b.minX, b.maxY - b.minY));
+            if (bestD <= reach) hit = best;
+          }
         }
-        // Fall back to classical ONLY when SAM was unavailable. If SAM ran and
-        // returned null, the click was on blank paper — create nothing.
-        if (!result && !samRan) {
-          result = await traceTool(imageUrl, point.x, point.y, paperCorners || undefined);
-        }
-        if (result) {
-          const outline = createToolOutline(result.points, pixelsPerMm || undefined, result.confidence, initialClicks);
-          addToolOutline(outline);
+
+        if (hit) {
+          selectOutline(hit.id);
+          const currentClicks = hit.samClicks ? [...hit.samClicks] : [];
+          currentClicks.push({ x: point.x, y: point.y, label });
+          let result = null;
+          try {
+            result = await samSegmentPoint(imageUrl, currentClicks, { paperCorners: paperCorners || undefined, onProgress: setSamProgress });
+          } catch (samErr) {
+            console.warn('SAM refine failed:', samErr);
+          } finally {
+            setSamProgress(null);
+          }
+          if (result) {
+            // UNION the new region into the existing outline (don't replace/lose it).
+            const existing = hit.smoothedPoints && hit.smoothedPoints.length >= 3 ? hit.smoothedPoints : hit.points;
+            const merged = label === 1 ? unionPolygons(existing, result.points) : result.points;
+            updateToolOutlineRefined(hit.id, merged, currentClicks);
+          }
+        } else {
+          // New tool creation (click on empty paper).
+          const initialClicks = [{ x: point.x, y: point.y, label: 1 }];
+          let result = null;
+          let samRan = false;
+          try {
+            result = await samSegmentPoint(imageUrl, initialClicks, { paperCorners: paperCorners || undefined, onProgress: setSamProgress });
+            samRan = true; // SAM completed (a null result = it ran and found no valid tool)
+          } catch (samErr) {
+            console.warn('SAM unavailable, falling back to classical trace:', samErr);
+          } finally {
+            setSamProgress(null);
+          }
+          // Fall back to classical ONLY when SAM was unavailable. If SAM ran and
+          // returned null, the click was on blank paper — create nothing.
+          if (!result && !samRan) {
+            result = await traceTool(imageUrl, point.x, point.y, paperCorners || undefined);
+          }
+          if (result) {
+            const outline = createToolOutline(result.points, pixelsPerMm || undefined, result.confidence, initialClicks);
+            addToolOutline(outline);
+          }
         }
       }
     } catch (error) {
@@ -624,7 +678,7 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     } finally {
       setIsTracing(false);
     }
-  }, [imageUrl, isTracing, pixelsPerMm, toolOutlines, selectedOutlineId, addToolOutline, updateToolOutlineRefined, paperCorners, activeTool]);
+  }, [imageUrl, isTracing, pixelsPerMm, toolOutlines, selectedOutlineId, addToolOutline, updateToolOutlineRefined, selectOutline, paperCorners, activeTool]);
 
   // Handle box selection — GrabCut graph-cut segmentation.
   const handleBoxSelect = useCallback(async (rect: { x: number; y: number; width: number; height: number }) => {
@@ -634,15 +688,42 @@ export const ImageWorkspace: React.FC<ImageWorkspaceProps> = ({
     try {
       const result = await grabCutInit(imageUrl, rect);
       if (result) {
-        const outline = createToolOutline(result.points, pixelsPerMm || undefined, result.confidence);
-        addToolOutline(outline);
+        // If the box sits on/near an existing tool, UNION into it (e.g. adding a
+        // chrome caliper jaw — Box Select is the reliable grab for thin/metallic
+        // parts). Otherwise create a new tool.
+        const cx = rect.x + rect.width / 2, cy = rect.y + rect.height / 2;
+        let best: (typeof toolOutlines)[number] | null = null;
+        let bestD = Infinity;
+        for (const o of toolOutlines) {
+          const b = o.boundingBox;
+          if (!b) continue;
+          const dx = Math.max(b.minX - cx, 0, cx - b.maxX);
+          const dy = Math.max(b.minY - cy, 0, cy - b.maxY);
+          const d = Math.hypot(dx, dy);
+          if (d < bestD) { bestD = d; best = o; }
+        }
+        let merged = false;
+        if (best && best.boundingBox) {
+          const b = best.boundingBox;
+          const reach = Math.max(150, 0.25 * Math.hypot(b.maxX - b.minX, b.maxY - b.minY));
+          if (bestD <= reach) {
+            const existing = best.smoothedPoints && best.smoothedPoints.length >= 3 ? best.smoothedPoints : best.points;
+            updateToolOutlineRefined(best.id, unionPolygons(existing, result.points), best.samClicks);
+            selectOutline(best.id);
+            merged = true;
+          }
+        }
+        if (!merged) {
+          const outline = createToolOutline(result.points, pixelsPerMm || undefined, result.confidence);
+          addToolOutline(outline);
+        }
       }
     } catch (error) {
       console.error('GrabCut error:', error);
     } finally {
       setIsTracing(false);
     }
-  }, [imageUrl, isTracing, pixelsPerMm, toolOutlines.length, addToolOutline]);
+  }, [imageUrl, isTracing, pixelsPerMm, toolOutlines, addToolOutline, updateToolOutlineRefined, selectOutline]);
 
   // Reset loaded state when image changes
   useEffect(() => {
