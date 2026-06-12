@@ -9,10 +9,9 @@
 import { useEffect, type ReactNode } from 'react';
 import { LoadingOverlay } from '@rapidtool/cad-ui';
 import { useAuthStore } from '../stores/authStore';
+import { LoginPage } from './LoginPage';
 
 const AUTH_DISABLED = import.meta.env.VITE_DISABLE_AUTH === 'true';
-const PORTAL_URL = import.meta.env.VITE_PORTAL_URL || 'https://portal.appliedadditive.com';
-const APP_URL = import.meta.env.VITE_APP_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 
 function FullScreenLoader({ message }: { message: string }) {
   return (
@@ -33,12 +32,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (isLoading) return <FullScreenLoader message="Checking your session…" />;
 
-  if (!isAuthenticated) {
-    // Single sign-on: log in once at the Portal, return here afterwards.
-    const returnTo = encodeURIComponent(APP_URL || window.location.href);
-    window.location.href = `${PORTAL_URL}/login?redirect=${returnTo}`;
-    return <FullScreenLoader message="Redirecting to sign in…" />;
-  }
+  // No shared session → show our own sign-in (which also offers the Portal hop).
+  // If the user is already logged into Portal/Fixture, fetchCurrentUser above will
+  // have authenticated them via the shared cookie and we never reach here.
+  if (!isAuthenticated) return <LoginPage />;
 
   return <>{children}</>;
 }
