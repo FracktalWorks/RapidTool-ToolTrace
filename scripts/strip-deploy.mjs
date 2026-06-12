@@ -1,17 +1,15 @@
 /**
  * Post-build strip for Cloudflare (Pages/Workers cap assets at 25 MB/file).
- * Removes files that exceed the cap AND are loaded from a CDN/R2 at runtime:
- *   - dist/models/*            (46MB SOD model → Cloudflare R2, via VITE_MODEL_URL)
- *   - dist/assets/ort-wasm-*   (onnxruntime-web wasm → jsDelivr, via ort wasmPaths)
+ * Removes only the bundled onnxruntime-web wasm (loaded from jsDelivr at runtime
+ * via ort wasmPaths, so the ~26MB bundled copy is dead weight and over the cap).
+ * The SOD model ships as <25MB .partN chunks (kept) — see sodWorker.loadModelBuffer.
  * Cross-platform (Node) so it works on Windows + the Cloudflare Linux builder.
  */
 import { rmSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-rmSync('dist/models', { recursive: true, force: true });
-
 const assets = 'dist/assets';
-let removed = ['dist/models'];
+let removed = [];
 if (existsSync(assets)) {
   for (const f of readdirSync(assets)) {
     if (f.startsWith('ort-wasm-') && f.endsWith('.wasm')) {

@@ -30,11 +30,29 @@ ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0-de
 // set in vite.config); if absent, ORT silently drops to 1 thread (~60 s) — still works.
 ort.env.wasm.numThreads = Math.min((self.navigator?.hardwareConcurrency || 4), 8);
 
-// Local dev serves the 46MB model from /public; production hosts it externally
-// (Cloudflare R2 / CDN) because Cloudflare Pages caps files at 25MB. Override with
-// VITE_MODEL_URL (must send CORS so it loads under COEP credentialless).
-const MODEL_URL = import.meta.env.VITE_MODEL_URL || '/models/isnet_q8.onnx';
+// The 46MB model is served in <25MB chunks (Cloudflare Pages/Workers cap files at
+// 25MB), same-origin from /public/models — no R2, no CORS. The worker fetches all
+// parts and reassembles them. VITE_MODEL_URL can override the base (e.g. an R2
+// path that also has .partN files).
+const MODEL_BASE = import.meta.env.VITE_MODEL_URL || '/models/isnet_q8.onnx';
+const MODEL_PARTS = 3;
 const SIZE = 1024;
+
+/** Fetch the model's .partN chunks (parallel) and concatenate into one buffer. */
+async function loadModelBuffer(): Promise<Uint8Array> {
+  const buffers = await Promise.all(
+    Array.from({ length: MODEL_PARTS }, async (_, i) => {
+      const r = await fetch(`${MODEL_BASE}.part${i}`);
+      if (!r.ok) throw new Error(`SOD model part ${i}: HTTP ${r.status}`);
+      return r.arrayBuffer();
+    }),
+  );
+  const total = buffers.reduce((n, b) => n + b.byteLength, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const b of buffers) { out.set(new Uint8Array(b), off); off += b.byteLength; }
+  return out;
+}
 // Mask threshold on the 0–255 normalised saliency. Lowering it to 0.31 to recover
 // faint bright chrome (caliper jaws) backfired — it didn't recover them (they read
 // below 0.31) but DID pick up faint pencil marks as false-positive blobs. Back to
@@ -64,7 +82,8 @@ async function initSession(id: string): Promise<void> {
   // WASM (SIMD + threads) only — see the wasmPaths note: WebGPU is a dead-end for
   // this int8 model on common GPUs. No warm-up needed (WASM has no shader compile).
   const threads = ort.env.wasm.numThreads;
-  session = await ort.InferenceSession.create(MODEL_URL, { executionProviders: ['wasm'] });
+  const modelData = await loadModelBuffer();
+  session = await ort.InferenceSession.create(modelData, { executionProviders: ['wasm'] });
   // crossOriginIsolated tells us whether SharedArrayBuffer (multi-thread) is live.
   const isolated = typeof self !== 'undefined' && (self as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated;
   device = isolated && threads > 1 ? `wasm×${threads}` : 'wasm (1 thread)';
