@@ -14,7 +14,7 @@ import { OrbitControls, GizmoHelper, GizmoViewport, Grid, Environment } from '@r
 import * as THREE from 'three';
 import { Brush, Evaluator, SUBTRACTION } from 'three-bvh-csg';
 import { useAppStore, type LayoutShape, type DesignSettings } from '../stores';
-import { createGridfinityFeet, unitsFor } from '../lib/gridfinityGeometry';
+import { createGridfinityFeet, createGridfinityLip, unitsFor } from '../lib/gridfinityGeometry';
 import { offsetPolygon } from '../lib/geometry';
 import { RotateCcw, Box } from 'lucide-react';
 
@@ -461,6 +461,12 @@ const ToolHolderMesh: React.FC<ToolHolderMeshProps> = ({
     return createGridfinityFeet(unitsFor(layoutWidth), unitsFor(layoutHeight));
   }, [layoutWidth, layoutHeight, settings.gridfinityBase]);
 
+  // Stacking lip on the top rim (so a bin stacks on this one).
+  const lipGeometry = useMemo(() => {
+    if (!settings.gridfinityBase) return null;
+    return createGridfinityLip(layoutWidth, layoutHeight, settings.wallThickness, settings.chamferSize);
+  }, [layoutWidth, layoutHeight, settings.wallThickness, settings.chamferSize, settings.gridfinityBase]);
+
   // Material for the holder walls and inner parts
   const holderMaterial = useMemo(() => {
     return new THREE.MeshStandardMaterial({
@@ -518,6 +524,15 @@ const ToolHolderMesh: React.FC<ToolHolderMeshProps> = ({
           geometry={feetGeometry}
           material={gridfinityMaterial}
           position={[0, 0, 0]}
+        />
+      )}
+
+      {/* Gridfinity stacking lip - chamfered rim on the top of the walls */}
+      {lipGeometry && (
+        <mesh
+          geometry={lipGeometry}
+          material={holderMaterial}
+          position={[0, 0, settings.baseHeight + settings.cutoutDepth]}
         />
       )}
     </group>

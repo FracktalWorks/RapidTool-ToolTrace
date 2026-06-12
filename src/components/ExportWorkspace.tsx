@@ -15,7 +15,7 @@ import * as THREE from 'three';
 import { Brush, Evaluator, SUBTRACTION } from 'three-bvh-csg';
 import { STLExporter } from 'three-stdlib';
 import { useAppStore, type LayoutShape, type DesignSettings } from '../stores';
-import { createGridfinityFeet, unitsFor } from '../lib/gridfinityGeometry';
+import { createGridfinityFeet, createGridfinityLip, unitsFor } from '../lib/gridfinityGeometry';
 import { offsetPolygon } from '../lib/geometry';
 import { Download, FileCode, Box, RotateCcw, Layers } from 'lucide-react';
 import { downloadSVG } from '../lib/exportSVG';
@@ -370,6 +370,14 @@ export function generateExportMesh(
     feetMatrix.makeRotationX(-Math.PI / 2);
     feet.applyMatrix4(feetMatrix);
     geometries.push(feet);
+
+    // Stacking lip on the top rim (z-offset = baseHeight + cutoutDepth).
+    const lip = createGridfinityLip(layoutWidth, layoutHeight, settings.wallThickness, settings.chamferSize);
+    const lipMatrix = new THREE.Matrix4();
+    lipMatrix.makeRotationX(-Math.PI / 2);
+    lipMatrix.setPosition(0, -(settings.baseHeight + settings.cutoutDepth), 0);
+    lip.applyMatrix4(lipMatrix);
+    geometries.push(lip);
   }
   
   // Merge geometries using BufferGeometryUtils approach

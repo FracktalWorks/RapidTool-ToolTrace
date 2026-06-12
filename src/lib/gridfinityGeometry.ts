@@ -8,9 +8,12 @@
  * feet hang beneath the bin and seat into the baseplate sockets below.
  */
 import * as THREE from 'three';
-import { GRID_UNIT, CLEARANCE, CORNER_RADIUS, FOOT_PROFILE, FOOT_HEIGHT } from './gridfinitySpec';
+import { GRID_UNIT, CLEARANCE, CORNER_RADIUS, FOOT_PROFILE, FOOT_HEIGHT, LIP_HEIGHT } from './gridfinitySpec';
 
 const SEG_PER_CORNER = 6;
+/** How far each foot's top is pushed UP into the base plate so the two solids
+ *  fuse (no coincident face → watertight for slicing). */
+const FOOT_OVERLAP = 0.4;
 
 /** Ordered CCW points of a rounded square (half-size `half`, corner radius `r`). */
 function roundedSquareLoop(half: number, r: number): THREE.Vector2[] {
@@ -41,6 +44,15 @@ function appendFoot(pos: number[], idx: number[], ox: number, oy: number, footHa
       z: p.z - FOOT_HEIGHT,
     })),
   );
+  // Extra ring: extend the full-footprint top straight up into the base plate.
+  const top = FOOT_PROFILE[FOOT_PROFILE.length - 1];
+  rings.push(
+    roundedSquareLoop(footHalf - top.inset, CORNER_RADIUS - top.inset).map((v) => ({
+      x: v.x + ox,
+      y: v.y + oy,
+      z: FOOT_OVERLAP,
+    })),
+  );
   const N = rings[0].length;
   const base = pos.length / 3;
   for (const ring of rings) for (const v of ring) pos.push(v.x, v.y, v.z);
@@ -59,10 +71,10 @@ function appendFoot(pos: number[], idx: number[], ox: number, oy: number, footHa
   const cBot = pos.length / 3;
   pos.push(ox, oy, -FOOT_HEIGHT);
   for (let i = 0; i < N; i++) { const i2 = (i + 1) % N; idx.push(cBot, base + i2, base + i); }
-  // Top cap (last ring, full footprint) facing +z.
+  // Top cap (last ring, raised into the base) facing +z.
   const last = base + (rings.length - 1) * N;
   const cTop = pos.length / 3;
-  pos.push(ox, oy, 0);
+  pos.push(ox, oy, FOOT_OVERLAP);
   for (let i = 0; i < N; i++) { const i2 = (i + 1) % N; idx.push(cTop, last + i, last + i2); }
 }
 
@@ -93,4 +105,61 @@ export function createGridfinityFeet(unitsX: number, unitsY: number): THREE.Buff
 /** How many whole 42 mm units fit in a given mm dimension (min 1). */
 export function unitsFor(mm: number): number {
   return Math.max(1, Math.round(mm / GRID_UNIT));
+}
+
+/** Ordered rounded-rectangle loop (half-extents halfW/halfH, corner radius r). */
+function roundedRectShape(width: number, height: number, r: number, t: number) {
+  const shape = new THREE.Shape();
+  shape.moveTo(-width / 2 + r, -height / 2);
+  shape.lineTo(width / 2 - r, -height / 2);
+  shape.quadraticCurveTo(width / 2, -height / 2, width / 2, -height / 2 + r);
+  shape.lineTo(width / 2, height / 2 - r);
+  shape.quadraticCurveTo(width / 2, height / 2, width / 2 - r, height / 2);
+  shape.lineTo(-width / 2 + r, height / 2);
+  shape.quadraticCurveTo(-width / 2, height / 2, -width / 2, height / 2 - r);
+  shape.lineTo(-width / 2, -height / 2 + r);
+  shape.quadraticCurveTo(-width / 2, -height / 2, -width / 2 + r, -height / 2);
+
+  const iW = width / 2 - t, iH = height / 2 - t, iR = Math.max(r - t * 0.5, 0.5);
+  const hole = new THREE.Path();
+  hole.moveTo(-iW + iR, -iH);
+  hole.lineTo(iW - iR, -iH);
+  hole.quadraticCurveTo(iW, -iH, iW, -iH + iR);
+  hole.lineTo(iW, iH - iR);
+  hole.quadraticCurveTo(iW, iH, iW - iR, iH);
+  hole.lineTo(-iW + iR, iH);
+  hole.quadraticCurveTo(-iW, iH, -iW, iH - iR);
+  hole.lineTo(-iW, -iH + iR);
+  hole.quadraticCurveTo(-iW, -iH, -iW + iR, -iH);
+  shape.holes.push(hole);
+  return shape;
+}
+
+/**
+ * Gridfinity STACKING LIP — a chamfered frame rim sized to the bin footprint,
+ * raised LIP_HEIGHT with a bevelled top edge so a bin stacked above nests onto
+ * it. Extrudes from z=0 upward; place it at the top of the walls.
+ */
+export function createGridfinityLip(
+  width: number,
+  height: number,
+  wallThickness: number,
+  chamfer: number,
+): THREE.ExtrudeGeometry {
+  const bevel = Math.min(Math.max(chamfer, 0.8), LIP_HEIGHT * 0.5);
+  // INSET the shape by the bevel so the outward-expanding bevel cap lands exactly
+  // at the bin footprint — the lip must NOT overhang or it won't fit a baseplate.
+  const shape = roundedRectShape(
+    width - 2 * bevel,
+    height - 2 * bevel,
+    Math.max(chamfer - bevel, 0.5),
+    wallThickness,
+  );
+  return new THREE.ExtrudeGeometry(shape, {
+    depth: Math.max(LIP_HEIGHT - bevel, 0.6),
+    bevelEnabled: true,
+    bevelThickness: bevel,
+    bevelSize: bevel,
+    bevelSegments: 2,
+  });
 }
